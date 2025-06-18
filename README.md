@@ -42,6 +42,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 ### General functionality
 
+- [ ] Cache rust-analyzer for test project so we can iterate on tests faster
 - [ ] Cache rust-analyzer analysis results to speed up subsequent queries on the same project
 - [ ] Only reload changed files instead of entire project on updates
 - [ ] Implement LRU cache for loaded projects to manage memory usage

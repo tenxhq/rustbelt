@@ -9,10 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use bimap::BiMap;
 use ra_ap_base_db::SourceRoot;
-use ra_ap_ide::{
-    AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange,
-    TextSize,
-};
+use ra_ap_ide::{AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize};
 use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap, SymbolKind};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use ra_ap_vfs::{
@@ -82,6 +79,7 @@ impl RustAnalyzer {
         }
     }
 
+    // TODO Change output to use a more structured format
     /// Get type hint information at the specified cursor position
     pub async fn get_type_hint(
         &mut self,
@@ -122,9 +120,9 @@ impl RustAnalyzer {
             documentation: true,
             keywords: true,
             format: HoverDocFormat::Markdown,
-            max_trait_assoc_items_count: Some(5),
-            max_fields_count: Some(5),
-            max_enum_variants_count: Some(5),
+            max_trait_assoc_items_count: Some(10),
+            max_fields_count: Some(10),
+            max_enum_variants_count: Some(10),
             max_subst_ty_len: SubstTyLen::Unlimited,
             show_drop_glue: false,
         };
@@ -205,9 +203,7 @@ impl RustAnalyzer {
             let offset_usize: usize = offset.into();
             if offset_usize < source_text.len() {
                 let current_char = source_text[offset_usize..].chars().next().unwrap_or('?');
-                println!(
-                    "Current character at offset {offset:?}: '{current_char}'"
-                );
+                println!("Current character at offset {offset:?}: '{current_char}'");
             } else {
                 debug!(
                     "Offset {:?} is out of bounds for file text length {}",
@@ -222,6 +218,7 @@ impl RustAnalyzer {
         // Query for definitions
         // Use std::panic::catch_unwind to handle potential panics in rust-analyzer
         // Happens when we query colum: 1 row: 1
+        // TODO Report bug
         let goto_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset })
         }));
@@ -364,7 +361,7 @@ impl RustAnalyzer {
         let project_root = self.find_project_root(file_path)?;
 
         // Check if we already loaded a project
-        // TODO Support multiple
+        // TODO Support multiple projects
         if self.current_project_root.is_some() {
             if self.current_project_root.as_ref() == Some(&project_root) {
                 return Ok(());
@@ -482,13 +479,16 @@ impl RustAnalyzer {
 
             // Apply VFS changes
             for (file_id, changed_file) in self.vfs.take_changes() {
-                let mut new_contents = None;
-                if let ra_ap_vfs::Change::Create(v, _) | ra_ap_vfs::Change::Modify(v, _) =
-                    changed_file.change
-                    && let Ok(text) = std::str::from_utf8(&v)
-                {
-                    new_contents = Some(text.to_owned());
-                }
+                let new_contents = match changed_file.change {
+                    ra_ap_vfs::Change::Create(v, _) | ra_ap_vfs::Change::Modify(v, _) => {
+                        if let Ok(text) = std::str::from_utf8(&v) {
+                            Some(text.to_owned())
+                        } else {
+                            None
+                        }
+                    }
+                    ra_ap_vfs::Change::Delete => None,
+                };
                 change.change_file(file_id, new_contents);
             }
 
