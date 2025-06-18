@@ -1,4 +1,4 @@
-# Example Files for Testing tenx-lsp
+# Example Files for Testing tenx-rustkit
 
 This directory contains sample Rust files for testing the rust-analyzer MCP server functionality.
 
@@ -33,7 +33,7 @@ You can test type hints at various positions in `sample.rs`:
 
 ```bash
 # Start the server in stdio mode
-cargo run --bin tenx-lsp -- --stdio
+cargo run --bin tenx-rustkit -- --stdio
 
 # Then call the get_type_hint tool with:
 {

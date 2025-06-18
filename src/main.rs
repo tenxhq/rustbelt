@@ -16,11 +16,11 @@ use tracing::info;
 pub mod analyzer;
 use analyzer::RustAnalyzer;
 
-const NAME: &str = "tenx-lsp";
+const NAME: &str = "tenx-rustkit";
 const VERSION: &str = "0.0.1";
 
 #[derive(Parser)]
-#[command(name = "tenx-lsp")]
+#[command(name = "tenx-rustkit")]
 #[command(about = "Rust-Analyzer MCP Server")]
 #[command(version)]
 struct Cli {
