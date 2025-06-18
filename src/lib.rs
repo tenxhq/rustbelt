@@ -1,4 +1,4 @@
-//! tenx-rustkit library
+//! rustbelt library
 //!
 //! Provides rust-analyzer functionality via MCP protocol
 

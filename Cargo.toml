@@ -1,11 +1,11 @@
 [package]
-name = "tenx-rustkit"
+name = "rustbelt"
 version = "0.0.1"
 edition = "2024"
 authors = ["David Gomez Urquiza <d@davo.io>"]
 description = "Provides rust-analyzer lsp functionality via MCP"
 license = "MIT"
-repository = "https://github.com/tenxhq/tenx-rustkit"
+repository = "https://github.com/tenxhq/rustbelt"
 readme = "README.md"
 keywords = ["lsp", "mcp", "rust-analyzer"]
 
@@ -47,5 +47,5 @@ tracing-subscriber = "0.3"
 clap = { version = "4.5", features = ["derive"] }
 
 [[bin]]
-name = "tenx-rustkit"
+name = "rustbelt"
 path = "src/main.rs"

@@ -1,10 +1,10 @@
-# tenx-rustkit
+# rustbelt
 
 A set of Rust specific tools to provide enhanced tools via the MCP protocol. These tools provide IDE functionality like type hints, go-to-definition, and semantic analysis.
 
 ## Overview
 
-tenx-rustkit bridges rust-analyzer's powerful IDE capabilities with the Model Context Protocol, allowing AI assistants and other MCP clients to access Rust language intelligence. The server analyzes Rust projects and provides semantic information about code symbols, types, and structure.
+rustbelt bridges rust-analyzer's powerful IDE capabilities with the Model Context Protocol, allowing AI assistants and other MCP clients to access Rust language intelligence. The server analyzes Rust projects and provides semantic information about code symbols, types, and structure.
 
 ## Usage
 
@@ -13,13 +13,13 @@ tenx-rustkit bridges rust-analyzer's powerful IDE capabilities with the Model Co
 Start the server in stdio mode for MCP clients:
 
 ```bash
-tenx-rustkit serve --stdio
+rustbelt serve --stdio
 ```
 
 Or start in TCP mode for debugging:
 
 ```bash
-tenx-rustkit serve --host 127.0.0.1 --port 3001
+rustbelt serve --host 127.0.0.1 --port 3001
 ```
 
 ### CLI Mode
@@ -27,7 +27,7 @@ tenx-rustkit serve --host 127.0.0.1 --port 3001
 Get type information directly from the command line:
 
 ```bash
-tenx-rustkit type-hint /path/to/file.rs 10 15
+rustbelt type-hint /path/to/file.rs 10 15
 ```
 
 ## Available Tools
