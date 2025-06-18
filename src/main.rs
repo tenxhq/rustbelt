@@ -51,11 +51,31 @@ enum Commands {
         /// Column number (1-based)
         column: u32,
     },
+    /// Get definition details for a symbol at a specific position
+    GetDefinition {
+        /// Path to the Rust source file
+        file_path: String,
+        /// Line number (1-based)
+        line: u32,
+        /// Column number (1-based)
+        column: u32,
+    },
 }
 
 /// Parameters for the get_type_hint tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 struct TypeHintParams {
+    /// Absolute path to the Rust source file
+    file_path: String,
+    /// Line number (1-based)
+    line: u32,
+    /// Column number (1-based)
+    column: u32,
+}
+
+/// Parameters for the goto_definition tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+struct GotoDefinitionParams {
     /// Absolute path to the Rust source file
     file_path: String,
     /// Line number (1-based)
@@ -91,13 +111,23 @@ impl Connection for RustAnalyzerConnection {
     }
 
     async fn tools_list(&mut self) -> Result<ListToolsResult> {
-        Ok(ListToolsResult::default().with_tool(
-            Tool::new(
-                "get_type_hint",
-                ToolInputSchema::from_json_schema::<TypeHintParams>(),
+        Ok(ListToolsResult::default()
+            .with_tool(
+                Tool::new(
+                    "get_type_hint",
+                    ToolInputSchema::from_json_schema::<TypeHintParams>(),
+                )
+                .with_description("Get type information for a symbol at the given cursor position"),
             )
-            .with_description("Get type information for a symbol at the given cursor position"),
-        ))
+            .with_tool(
+                Tool::new(
+                    "goto_definition",
+                    ToolInputSchema::from_json_schema::<GotoDefinitionParams>(),
+                )
+                .with_description(
+                    "Get definition location for a symbol at the given cursor position",
+                ),
+            ))
     }
 
     async fn tools_call(
@@ -127,6 +157,40 @@ impl Connection for RustAnalyzerConnection {
                         .is_error(false)),
                     Err(e) => Ok(CallToolResult::new()
                         .with_text_content(format!("Error getting type hint: {e}"))
+                        .is_error(true)),
+                }
+            }
+            "goto_definition" => {
+                let params = match arguments {
+                    Some(args) => serde_json::from_value::<GotoDefinitionParams>(args)?,
+                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
+                };
+
+                match self
+                    .analyzer
+                    .lock()
+                    .await
+                    .get_definition(&params.file_path, params.line, params.column)
+                    .await
+                {
+                    Ok(Some(definitions)) => {
+                        let mut result_text =
+                            format!("Found {} definition(s):\n", definitions.len());
+                        for def in definitions {
+                            result_text.push_str(&format!(
+                                "  {}:{}:{} - {} ({:?})\n",
+                                def.file_path, def.line, def.column, def.name, def.kind
+                            ));
+                        }
+                        Ok(CallToolResult::new()
+                            .with_text_content(result_text)
+                            .is_error(false))
+                    }
+                    Ok(None) => Ok(CallToolResult::new()
+                        .with_text_content("No definitions found at this position")
+                        .is_error(false)),
+                    Err(e) => Ok(CallToolResult::new()
+                        .with_text_content(format!("Error getting definitions: {e}"))
                         .is_error(true)),
                 }
             }
@@ -185,6 +249,37 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Error getting type hint: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::GetDefinition {
+            file_path,
+            line,
+            column,
+        } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            // Initialize a standalone analyzer for CLI usage
+            let mut analyzer = RustAnalyzer::new();
+
+            match analyzer.get_definition(&file_path, line, column).await {
+                Ok(Some(definitions)) => {
+                    println!("Found {} definition(s):", definitions.len());
+                    for def in definitions {
+                        println!(
+                            "  {}:{}:{} - {} ({:?})",
+                            def.file_path, def.line, def.column, def.name, def.kind
+                        );
+                    }
+                }
+                Ok(None) => {
+                    eprintln!("No definitions found at {file_path}:{line}:{column}");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error getting definitions: {e}");
                     std::process::exit(1);
                 }
             }

@@ -35,6 +35,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 | Tool Name | Status | Description | Parameters |
 |-----------|--------|-------------|------------|
 | `get_type_hint` | Implemented | Get type information for a symbol at cursor position | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
+| `get_definition` | Incomplete | Get definition for symbol at cursor position | `file_path`, `line`, `column` |
 
 
 ## Planned Improvements
@@ -52,7 +53,6 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description | Parameters |
 |-----------|--------|-------------|------------|
-| `goto_definition` | Planned | Navigate to symbol definition | `file_path`, `line`, `column` |
 | `rename_symbol` | Planned | Rename a symbol across the workspace | `file_path`, `line`, `column`, `new_name` |
 | `find_references` | Planned | Find all references to a symbol | `file_path`, `line`, `column` |
 | `get_completions` | Planned | Get code completion suggestions | `file_path`, `line`, `column`, `trigger_character?` |

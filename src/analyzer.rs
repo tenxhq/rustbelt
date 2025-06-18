@@ -4,25 +4,48 @@
 //! making it easy to get type hints, definitions, and other semantic
 //! information.
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use bimap::BiMap;
 use ra_ap_base_db::SourceRoot;
 use ra_ap_ide::{
     AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange,
     TextSize,
 };
-use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap};
+use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap, SymbolKind};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use ra_ap_vfs::{
     AbsPathBuf, Vfs, VfsPath,
     loader::{Handle, LoadingProgress},
 };
 use ra_ap_vfs_notify as vfs_notify;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+/// Information about a definition location
+#[derive(Debug, Clone)]
+pub struct DefinitionInfo {
+    /// Path to the file containing the definition
+    pub file_path: String,
+    /// Line number (1-based) where the definition starts
+    pub line: u32,
+    /// Column number (1-based) where the definition starts
+    pub column: u32,
+    /// Line number (1-based) where the definition ends
+    pub end_line: u32,
+    /// Column number (1-based) where the definition ends
+    pub end_column: u32,
+    /// Name of the defined symbol
+    pub name: String,
+    /// Kind of the symbol (function, struct, etc.)
+    pub kind: Option<SymbolKind>,
+    /// Content of the definition
+    pub content: String,
+    /// Canonical module path
+    pub module: String,
+    /// Rustdoc description, if available
+    pub description: Option<String>,
+}
 
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
@@ -31,9 +54,8 @@ pub struct RustAnalyzer {
     vfs: Vfs,
     loader: vfs_notify::NotifyHandle,
     message_receiver: crossbeam_channel::Receiver<ra_ap_vfs::loader::Message>,
-    file_map: HashMap<PathBuf, FileId>,
+    file_map: BiMap<PathBuf, FileId>,
     current_project_root: Option<PathBuf>,
-    workspace_loaded: bool,
 }
 
 impl Default for RustAnalyzer {
@@ -50,13 +72,12 @@ impl RustAnalyzer {
         let loader = vfs_notify::NotifyHandle::spawn(message_sender);
 
         Self {
-            host: AnalysisHost::new(None),
+            host: AnalysisHost::new(Some(100)),
             vfs,
             loader,
             message_receiver,
-            file_map: HashMap::new(),
+            file_map: BiMap::new(),
             current_project_root: None,
-            workspace_loaded: false,
         }
     }
 
@@ -142,19 +163,125 @@ impl RustAnalyzer {
         }
     }
 
+    /// Get definition information at the specified cursor position
+    pub async fn get_definition(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Option<Vec<DefinitionInfo>>> {
+        let path = PathBuf::from(file_path);
+
+        // Ensure the project/workspace is loaded
+        self.ensure_project_loaded(&path).await?;
+
+        // Load the file if not already loaded
+        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+
+        let analysis = self.host.analysis();
+
+        // Get the file's line index for position conversion
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        // Convert line/column to text offset from 1-based to 0-based indexing
+        let line_col = LineCol {
+            line: line.saturating_sub(1),
+            col: column.saturating_sub(1),
+        };
+        let offset = line_index
+            .offset(line_col)
+            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+
+        debug!(
+            "Attempting goto definition query for file {:?} at offset {:?} (line {} col {})",
+            file_id, offset, line, column
+        );
+
+        // Query for definitions
+        match analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset }) {
+            Ok(Some(range_info)) => {
+                let mut definitions = Vec::new();
+
+                for nav in range_info.info {
+                    // Get file path from file_id
+                    if let Ok(line_index) = analysis.file_line_index(nav.file_id) {
+                        let start_line_col = line_index.line_col(nav.focus_or_full_range().start());
+                        let end_line_col = line_index.line_col(nav.focus_or_full_range().end());
+
+                        let file_path = self
+                            .file_map
+                            .get_by_right(&nav.file_id)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .ok_or(anyhow::anyhow!(
+                                "File ID {:?} not found in file map",
+                                &nav.file_id
+                            ))?;
+
+                        definitions.push(DefinitionInfo {
+                            file_path,
+                            line: start_line_col.line + 1, // Convert back to 1-based
+                            column: start_line_col.col + 1, // Convert back to 1-based
+                            end_line: end_line_col.line + 1,
+                            end_column: end_line_col.col + 1,
+                            name: nav.name.to_string(),
+                            kind: nav.kind,
+                            description: nav.description.clone(),
+                            module: "PENDING MODULE".into(),
+                            content: "PENDING DEFINITION".into(),
+                        });
+                    }
+                }
+
+                debug!(
+                    "Found {} definitions for {}:{}:{}",
+                    definitions.len(),
+                    file_path,
+                    line,
+                    column
+                );
+                Ok(Some(definitions))
+            }
+            Ok(None) => {
+                debug!(
+                    "No definitions available for {}:{}:{}",
+                    file_path, line, column
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("Goto definition analysis failed: {:?}", e);
+                bail!("Goto definition analysis failed: {:?}", e)
+            }
+        }
+    }
+
     /// Ensure the project workspace is loaded for the given file path
     async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<()> {
         let project_root = self.find_project_root(file_path)?;
 
-        // Check if we already loaded this project
-        if self.current_project_root.as_ref() == Some(&project_root) && self.workspace_loaded {
-            return Ok(());
+        // Check if we already loaded a project
+        // TODO Support multiple
+        if self.current_project_root.is_some() {
+            if self.current_project_root.as_ref() == Some(&project_root) {
+                return Ok(());
+            } else {
+                error!(
+                    "Attempting to change workspaces, from {:?} to {:?}.",
+                    self.current_project_root, project_root
+                );
+                return Err(anyhow::anyhow!(
+                    "Cannot change workspaces after a project has already been loaded. Current: {:?}, New: {:?}",
+                    self.current_project_root,
+                    project_root
+                ));
+            }
         }
 
         info!("Loading project workspace from: {}", project_root.display());
         self.load_workspace(&project_root).await?;
         self.current_project_root = Some(project_root);
-        self.workspace_loaded = true;
 
         Ok(())
     }
@@ -303,7 +430,7 @@ impl RustAnalyzer {
     /// Load a file into the analysis host
     async fn load_file(&mut self, path: &Path) -> Result<FileId> {
         // Check if file is already loaded
-        if let Some(&file_id) = self.file_map.get(path) {
+        if let Some(&file_id) = self.file_map.get_by_left(path) {
             return Ok(file_id);
         }
 
