@@ -76,6 +76,7 @@ impl RustAnalyzer {
             vfs,
             loader,
             message_receiver,
+            // TODO Remove file_map and rely on VFS for file management
             file_map: BiMap::new(),
             current_project_root: None,
         }
@@ -195,12 +196,48 @@ impl RustAnalyzer {
             .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
 
         debug!(
-            "Attempting goto definition query for file {:?} at offset {:?} (line {} col {})",
+            "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
             file_id, offset, line, column
         );
 
+        // Debug the current character at the offset
+        if let Ok(source_text) = analysis.file_text(file_id) {
+            let offset_usize: usize = offset.into();
+            if offset_usize < source_text.len() {
+                let current_char = source_text[offset_usize..].chars().next().unwrap_or('?');
+                println!(
+                    "Current character at offset {offset:?}: '{current_char}'"
+                );
+            } else {
+                debug!(
+                    "Offset {:?} is out of bounds for file text length {}",
+                    offset,
+                    source_text.len()
+                );
+            }
+        } else {
+            debug!("Failed to read source text for file ID {:?}", file_id);
+        }
+
         // Query for definitions
-        match analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset }) {
+        // Use std::panic::catch_unwind to handle potential panics in rust-analyzer
+        // Happens when we query colum: 1 row: 1
+        let goto_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset })
+        }));
+
+        let definitions_result = match goto_result {
+            Ok(result) => result,
+            Err(_panic) => {
+                debug!(
+                    "Caught panic during goto_definition for {}:{}:{}, likely due to edge case in rust-analyzer",
+                    file_path, line, column
+                );
+                return Ok(None);
+            }
+        };
+
+        match definitions_result {
             Ok(Some(range_info)) => {
                 let mut definitions = Vec::new();
 
@@ -210,14 +247,79 @@ impl RustAnalyzer {
                         let start_line_col = line_index.line_col(nav.focus_or_full_range().start());
                         let end_line_col = line_index.line_col(nav.focus_or_full_range().end());
 
-                        let file_path = self
-                            .file_map
-                            .get_by_right(&nav.file_id)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .ok_or(anyhow::anyhow!(
-                                "File ID {:?} not found in file map",
+                        let file_path = if self.vfs.exists(nav.file_id) {
+                            let vfs_path = self.vfs.file_path(nav.file_id);
+                            vfs_path.to_string()
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "File ID {:?} not found in VFS",
                                 &nav.file_id
-                            ))?;
+                            ));
+                        };
+
+                        // Get module path using moniker if available
+                        let module = if let Ok(Some(moniker_info)) =
+                            analysis.moniker(ra_ap_ide::FilePosition {
+                                file_id: nav.file_id,
+                                offset: nav.focus_or_full_range().start(),
+                            }) {
+                            // Extract module path from moniker
+                            match &moniker_info.info.first() {
+                                Some(ra_ap_ide::MonikerResult::Moniker(moniker)) => {
+                                    // Build full module path from crate name and description
+                                    let crate_name = &moniker.identifier.crate_name;
+                                    let module_parts: Vec<String> = moniker
+                                        .identifier
+                                        .description
+                                        .iter()
+                                        .map(|desc| desc.name.to_string())
+                                        .collect();
+
+                                    if module_parts.is_empty() {
+                                        crate_name.clone()
+                                    } else {
+                                        format!("{}::{}", crate_name, module_parts.join("::"))
+                                    }
+                                }
+                                Some(ra_ap_ide::MonikerResult::Local { .. }) => {
+                                    // For local symbols, fall back to container name
+                                    nav.container_name
+                                        .as_ref()
+                                        .map(|name| name.to_string())
+                                        .unwrap_or_else(|| "local".to_string())
+                                }
+                                None => {
+                                    // Fall back to container name
+                                    nav.container_name
+                                        .as_ref()
+                                        .map(|name| name.to_string())
+                                        .unwrap_or_else(|| "unknown".to_string())
+                                }
+                            }
+                        } else {
+                            // Fall back to container name if moniker fails
+                            nav.container_name
+                                .as_ref()
+                                .map(|name| name.to_string())
+                                .unwrap_or_else(|| "unknown".to_string())
+                        };
+
+                        // Extract definition content from source
+                        let content = if let Ok(source_text) = analysis.file_text(nav.file_id) {
+                            let full_range = nav.full_range;
+                            let start_offset = full_range.start().into();
+                            let end_offset = full_range.end().into();
+
+                            if start_offset < source_text.len() && end_offset <= source_text.len() {
+                                source_text[start_offset..end_offset].to_string()
+                            } else {
+                                format!(
+                                    "// Content extraction failed: invalid range {start_offset}..{end_offset}"
+                                )
+                            }
+                        } else {
+                            "// Content extraction failed: could not read source".to_string()
+                        };
 
                         definitions.push(DefinitionInfo {
                             file_path,
@@ -228,8 +330,8 @@ impl RustAnalyzer {
                             name: nav.name.to_string(),
                             kind: nav.kind,
                             description: nav.description.clone(),
-                            module: "PENDING MODULE".into(),
-                            content: "PENDING DEFINITION".into(),
+                            module,
+                            content,
                         });
                     }
                 }
@@ -430,6 +532,7 @@ impl RustAnalyzer {
     /// Load a file into the analysis host
     async fn load_file(&mut self, path: &Path) -> Result<FileId> {
         // Check if file is already loaded
+        // TODO Check in VFS if file is loaded
         if let Some(&file_id) = self.file_map.get_by_left(path) {
             return Ok(file_id);
         }

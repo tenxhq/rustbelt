@@ -84,14 +84,14 @@ async fn test_type_hint_complex_generic() {
 }
 
 #[tokio::test]
-async fn test_goto_definition_struct() {
+async fn test_get_definition_struct() {
     let analyzer = get_shared_analyzer().await;
     let mut analyzer = analyzer.lock().await;
     let sample_path = get_sample_file_path();
 
-    // Test goto definition for Person struct usage on line 33
+    // Test get definition for Person struct usage on line 33
     let definitions = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 33, 14)
+        .get_definition(sample_path.to_str().unwrap(), 33, 18)
         .await
         .expect("Error getting definition")
         .expect("Expected to find definition for Person struct");
@@ -111,12 +111,12 @@ async fn test_goto_definition_struct() {
 }
 
 #[tokio::test]
-async fn test_goto_definition_function() {
+async fn test_get_external_definition_function() {
     let analyzer = get_shared_analyzer().await;
     let mut analyzer = analyzer.lock().await;
     let sample_path = get_sample_file_path();
 
-    // Test goto definition for function call on line 35
+    // Test get definition for function call on line 35
     let definitions = analyzer
         .get_definition(sample_path.to_str().unwrap(), 35, 14)
         .await
@@ -132,21 +132,22 @@ async fn test_goto_definition_function() {
         definition.description,
         Some("pub fn insert(&mut self, k: K, v: V) -> Option<V>".into())
     );
-    let has_function_def = definition.name.contains("calculate_average_age")
-        && matches!(definition.kind, Some(SymbolKind::Function));
-    assert!(
-        has_function_def,
-        "Should find calculate_average_age function definition"
-    );
+    let has_function_def =
+        definition.name.contains("insert") && matches!(definition.kind, Some(SymbolKind::Function));
+    assert!(has_function_def, "Should find `insert` function definition");
+    assert_eq!(
+        definition.module,
+        "std::collections::hash::map::impl::HashMap<K, V, S>::insert"
+    )
 }
 
 #[tokio::test]
-async fn test_goto_definition_method() {
+async fn test_get_definition_method() {
     let analyzer = get_shared_analyzer().await;
     let mut analyzer = analyzer.lock().await;
     let sample_path = get_sample_file_path();
 
-    // Test goto definition for method call on line 33 (.with_email)
+    // Test get definition for method call on line 33 (.with_email)
     let definitions = analyzer
         .get_definition(sample_path.to_str().unwrap(), 33, 55)
         .await
@@ -196,7 +197,7 @@ async fn test_no_definition_available() {
     let mut analyzer = analyzer.lock().await;
     let sample_path = get_sample_file_path();
 
-    // Test goto definition on a comment or whitespace (should return None or empty)
+    // Test get definition on a comment or whitespace (should return None or empty)
     let result = analyzer
         .get_definition(sample_path.to_str().unwrap(), 1, 1)
         .await
@@ -228,7 +229,7 @@ async fn test_multiple_usages_same_analyzer() {
         .await;
     assert!(type_result.is_ok());
 
-    // Second operation: goto definition
+    // Second operation: get definition
     let def_result = analyzer
         .get_definition(sample_path.to_str().unwrap(), 32, 15)
         .await;

@@ -73,9 +73,9 @@ struct TypeHintParams {
     column: u32,
 }
 
-/// Parameters for the goto_definition tool
+/// Parameters for the get_definition tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-struct GotoDefinitionParams {
+struct GetDefinitionParams {
     /// Absolute path to the Rust source file
     file_path: String,
     /// Line number (1-based)
@@ -121,8 +121,8 @@ impl Connection for RustAnalyzerConnection {
             )
             .with_tool(
                 Tool::new(
-                    "goto_definition",
-                    ToolInputSchema::from_json_schema::<GotoDefinitionParams>(),
+                    "get_definition",
+                    ToolInputSchema::from_json_schema::<GetDefinitionParams>(),
                 )
                 .with_description(
                     "Get definition location for a symbol at the given cursor position",
@@ -160,9 +160,9 @@ impl Connection for RustAnalyzerConnection {
                         .is_error(true)),
                 }
             }
-            "goto_definition" => {
+            "get_definition" => {
                 let params = match arguments {
-                    Some(args) => serde_json::from_value::<GotoDefinitionParams>(args)?,
+                    Some(args) => serde_json::from_value::<GetDefinitionParams>(args)?,
                     None => return Err(Error::InvalidParams("No arguments provided".to_string())),
                 };
 
