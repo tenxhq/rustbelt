@@ -1,0 +1,51 @@
+[package]
+name = "tenx-lsp"
+version = "0.0.1"
+edition = "2024"
+authors = ["David Gomez Urquiza <d@davo.io>"]
+description = "Provides rust-analyzer lsp functionality via MCP"
+license = "MIT"
+repository = "https://github.com/tenxhq/tenx-lsp"
+readme = "README.md"
+keywords = ["lsp", "mcp", "rust-analyzer"]
+
+[dependencies]
+# rust-analyzer core functionality
+ra_ap_base_db = "0.0.288"
+ra_ap_cfg = "0.0.288"
+ra_ap_ide = "0.0.288"
+ra_ap_ide_db = "0.0.288"
+ra_ap_intern = "0.0.288"
+ra_ap_project_model = "0.0.288"
+ra_ap_syntax = "0.0.288"
+ra_ap_vfs = "0.0.288"
+ra_ap_vfs-notify = "0.0.288"
+
+# rust-analyzer transitive dependencies
+triomphe = "0.1"
+crossbeam-channel = "0.5"
+
+# MCP support
+tenx-mcp = { git = "https://github.com/tenxhq/tenx-mcp.git", rev = "1f49b8f"}
+
+# Async runtime
+tokio = { version = "1.45", features = ["full"] }
+async-trait = "0.1.88"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+[[bin]]
+name = "tenx-lsp"
+path = "src/main.rs"
