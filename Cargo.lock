@@ -2148,7 +2148,7 @@ dependencies = [
 [[package]]
 name = "tenx-mcp"
 version = "0.1.0"
-source = "git+https://github.com/tenxhq/tenx-mcp.git?rev=1f49b8f#1f49b8ff7f3a360be9e8222b793ee3ce635d46fe"
+source = "git+https://github.com/tenxhq/tenx-mcp.git?rev=5ee6c00#5ee6c0097e4fd57558e54f0398124c98fa1df6d0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2487,7 +2487,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

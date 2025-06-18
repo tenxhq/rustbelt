@@ -3,11 +3,11 @@ name = "rustbelt"
 version = "0.0.1"
 edition = "2024"
 authors = ["David Gomez Urquiza <d@davo.io>"]
-description = "Provides rust-analyzer lsp functionality via MCP"
+description = "A set of Rust specific tools to provide enhanced tools via the MCP protocol. These tools provide IDE functionality like type hints, go-to-definition, and semantic analysis."
 license = "MIT"
 repository = "https://github.com/tenxhq/rustbelt"
 readme = "README.md"
-keywords = ["lsp", "mcp", "rust-analyzer"]
+keywords = ["lsp", "mcp", "rust-analyzer", "AI assistance"]
 
 [dependencies]
 # rust-analyzer core functionality
@@ -26,7 +26,7 @@ triomphe = "0.1"
 crossbeam-channel = "0.5"
 
 # MCP support
-tenx-mcp = { git = "https://github.com/tenxhq/tenx-mcp.git", rev = "1f49b8f"}
+tenx-mcp = { git = "https://github.com/tenxhq/tenx-mcp.git", rev = "5ee6c00"}
 
 # Async runtime
 tokio = { version = "1.45", features = ["full"] }
