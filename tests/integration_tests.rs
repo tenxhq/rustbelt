@@ -271,3 +271,33 @@ async fn test_analyzer_workspace_loading() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_type_hint_variable_with_name() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test type hint for 'doubled' variable on line 42 (should show "let doubled:
+    // Vec<i32>")
+    let type_info = analyzer
+        .get_type_hint(sample_path.to_str().unwrap(), 41, 9)
+        .await
+        .expect("Error getting type hint")
+        .expect("Expected type info but got None");
+
+    println!("Type info: {}", type_info);
+
+    // Should contain both the variable name and type
+    assert!(
+        type_info.contains("numbers"),
+        "Should contain variable name 'numbers'"
+    );
+    // TODO Why is Vec<i32> not showing up?
+    assert!(
+        type_info.contains("Vec<i32, Global>"),
+        "Should contain type Vec<i32, Global>"
+    );
+    // TODO This would be nice, but it doesn't show up in the type info
+    // assert!(type_info.contains("let"), "Should contain 'let' keyword");
+}

@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use bimap::BiMap;
 use ra_ap_base_db::SourceRoot;
-use ra_ap_ide::{AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize};
+use ra_ap_ide::{
+    AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange,
+    TextSize,
+};
 use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap, SymbolKind};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use ra_ap_vfs::{
@@ -119,11 +122,12 @@ impl RustAnalyzer {
             memory_layout: None,
             documentation: true,
             keywords: true,
-            format: HoverDocFormat::Markdown,
+            // TODO Consider using Markdown but figure out how to reliably show symbol names too
+            format: HoverDocFormat::PlainText,
             max_trait_assoc_items_count: Some(10),
             max_fields_count: Some(10),
             max_enum_variants_count: Some(10),
-            max_subst_ty_len: SubstTyLen::Unlimited,
+            max_subst_ty_len: SubstTyLen::Hide,
             show_drop_glue: false,
         };
 
@@ -133,33 +137,61 @@ impl RustAnalyzer {
         );
 
         // Try hover with the configured settings
-        match analysis.hover(
+        let hover_result = match analysis.hover(
             &hover_config,
             FileRange {
                 file_id,
                 range: text_range,
             },
         ) {
-            Ok(Some(hover_result)) => {
-                let markup = hover_result.info.markup.as_str();
-                debug!(
-                    "Got type hint for {}:{}:{}: {}",
-                    file_path, line, column, markup
-                );
-                Ok(Some(markup.to_string()))
-            }
+            Ok(Some(hover_result)) => hover_result,
             Ok(None) => {
                 debug!(
                     "No hover info available for {}:{}:{}",
                     file_path, line, column
                 );
-                Ok(None)
+                return Ok(None);
             }
             Err(e) => {
                 warn!("Hover analysis failed: {:?}", e);
                 bail!("Hover analysis failed: {:?}", e)
             }
-        }
+        };
+
+        // Get the type information from hover
+        let type_info = hover_result.info.markup.as_str();
+
+        // Try to get the symbol name using goto_definition
+        let symbol_name =
+            match analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset }) {
+                Ok(Some(range_info)) => {
+                    // Look for a local definition that represents the variable
+                    if let Some(nav) = range_info.info.first() {
+                        // Check if this is a local variable by looking at the definition location
+                        if nav.file_id == file_id {
+                            Some(nav.name.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+        // Combine symbol name with type information
+        let result = if let Some(name) = symbol_name {
+            format!("{name}: {type_info}")
+        } else {
+            type_info.to_string()
+        };
+
+        debug!(
+            "Got type hint for {}:{}:{}: {}",
+            file_path, line, column, result
+        );
+        Ok(Some(result))
     }
 
     /// Get definition information at the specified cursor position
