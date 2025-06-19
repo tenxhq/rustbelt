@@ -34,6 +34,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description | Parameters |
 |-----------|--------|-------------|------------|
+| `ruskel` | Implemented | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
 | `get_type_hint` | Implemented | Get type information for a symbol at cursor position | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
 | `get_definition` | Incomplete | Get definition for symbol at cursor position | `file_path`, `line`, `column` |
 
@@ -56,7 +57,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 |-----------|--------|-------------|------------|
 | `rename_symbol` | Planned | Rename a symbol across the workspace | `file_path`, `line`, `column`, `new_name` |
 | `find_references` | Planned | Find all references to a symbol | `file_path`, `line`, `column` |
-| `get_completions` | Planned | Get code completion suggestions | `file_path`, `line`, `column`, `trigger_character?` |
+| `get_completions` | Planned | Get code completion suggestions | `file_path`, `line`, `column` |
 | `get_signature_help` | Planned | Get function signature information | `file_path`, `line`, `column` |
 | `get_document_symbols` | Planned | Get all symbols in a document | `file_path` |
 | `get_workspace_symbols` | Planned | Search for symbols across workspace | `query` |
@@ -80,5 +81,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Related Projects
 
-- Built on top of [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 - Powered by [tenx-mcp](https://github.com/tenxhq/tenx-mcp)
+- Relies on [ruskel](https://github.com/cortesi/ruskel) for generating Rust code skeletons
+- Built on top of [rust-analyzer](https://github.com/rust-lang/rust-analyzer) internal crates

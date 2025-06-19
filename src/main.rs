@@ -14,7 +14,9 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 pub mod analyzer;
+pub mod ruskel;
 use analyzer::RustAnalyzer;
+use ruskel::ruskel_analyzer::RuskelAnalyzer;
 
 const NAME: &str = "rustbelt";
 const VERSION: &str = "0.0.1";
@@ -84,16 +86,37 @@ struct GetDefinitionParams {
     column: u32,
 }
 
+/// Parameters for the ruskel tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+struct RuskelParams {
+    /// Target specification (crate path, published crate name, or module path)
+    target: String,
+    /// Optional specific features to enable
+    #[serde(default)]
+    features: Vec<String>,
+    /// Enable all features
+    #[serde(default)]
+    all_features: bool,
+    /// Disable default features
+    #[serde(default)]
+    no_default_features: bool,
+    /// Include private items in the skeleton
+    #[serde(default)]
+    private: bool,
+}
+
 /// Rust-Analyzer MCP server connection
 #[derive(Debug, Clone)]
 struct RustAnalyzerConnection {
     analyzer: Arc<Mutex<RustAnalyzer>>,
+    ruskel_analyzer: Arc<Mutex<RuskelAnalyzer>>,
 }
 
 impl Default for RustAnalyzerConnection {
     fn default() -> Self {
         Self {
             analyzer: Arc::new(Mutex::new(RustAnalyzer::new())),
+            ruskel_analyzer: Arc::new(Mutex::new(RuskelAnalyzer::new())),
         }
     }
 }
@@ -112,6 +135,15 @@ impl Connection for RustAnalyzerConnection {
 
     async fn tools_list(&mut self) -> Result<ListToolsResult> {
         Ok(ListToolsResult::default()
+            .with_tool(
+                Tool::new(
+                    "ruskel",
+                    ToolInputSchema::from_json_schema::<RuskelParams>(),
+                )
+                .with_description(
+                    "Generate a Rust code skeleton for a crate, showing its public API structure",
+                ),
+            )
             .with_tool(
                 Tool::new(
                     "get_type_hint",
@@ -174,13 +206,10 @@ impl Connection for RustAnalyzerConnection {
                     .await
                 {
                     Ok(Some(definitions)) => {
-                        let mut result_text =
-                            format!("Found {} definition(s):\n", definitions.len());
+                        let mut result_text = String::new();
+                        // format!("Found {} definition(s):\n", definitions.len());
                         for def in definitions {
-                            result_text.push_str(&format!(
-                                "  {}:{}:{} - {} ({:?})\n",
-                                def.file_path, def.line, def.column, def.name, def.kind
-                            ));
+                            result_text.push_str(&format!("{:?}\n", def));
                         }
                         Ok(CallToolResult::new()
                             .with_text_content(result_text)
@@ -191,6 +220,44 @@ impl Connection for RustAnalyzerConnection {
                         .is_error(false)),
                     Err(e) => Ok(CallToolResult::new()
                         .with_text_content(format!("Error getting definitions: {e}"))
+                        .is_error(true)),
+                }
+            }
+            "ruskel" => {
+                let params = match arguments {
+                    Some(args) => match serde_json::from_value::<RuskelParams>(args) {
+                        Ok(params) => params,
+                        Err(e) => {
+                            return Ok(CallToolResult::new()
+                                .with_text_content(format!("Invalid arguments: {e}"))
+                                .is_error(true));
+                        }
+                    },
+                    None => {
+                        return Ok(CallToolResult::new()
+                            .with_text_content("No arguments provided")
+                            .is_error(true));
+                    }
+                };
+
+                match self
+                    .ruskel_analyzer
+                    .lock()
+                    .await
+                    .generate_skeleton(
+                        &params.target,
+                        &params.features,
+                        params.all_features,
+                        params.no_default_features,
+                        params.private,
+                    )
+                    .await
+                {
+                    Ok(skeleton) => Ok(CallToolResult::new()
+                        .with_text_content(skeleton)
+                        .is_error(false)),
+                    Err(e) => Ok(CallToolResult::new()
+                        .with_text_content(format!("Error generating skeleton: {e}"))
                         .is_error(true)),
                 }
             }
