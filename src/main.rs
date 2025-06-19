@@ -15,7 +15,7 @@ use tracing::info;
 
 pub mod analyzer;
 pub mod ruskel;
-use analyzer::RustAnalyzer;
+use analyzer::RustAnalyzerish;
 use ruskel::ruskel_analyzer::RuskelAnalyzer;
 
 const NAME: &str = "rustbelt";
@@ -121,14 +121,14 @@ struct RuskelParams {
 /// Rust-Analyzer MCP server connection
 #[derive(Debug, Clone)]
 struct RustAnalyzerConnection {
-    analyzer: Arc<Mutex<RustAnalyzer>>,
+    analyzer: Arc<Mutex<RustAnalyzerish>>,
     ruskel_analyzer: Arc<Mutex<RuskelAnalyzer>>,
 }
 
 impl Default for RustAnalyzerConnection {
     fn default() -> Self {
         Self {
-            analyzer: Arc::new(Mutex::new(RustAnalyzer::new())),
+            analyzer: Arc::new(Mutex::new(RustAnalyzerish::new())),
             ruskel_analyzer: Arc::new(Mutex::new(RuskelAnalyzer::new())),
         }
     }
@@ -375,7 +375,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzer::new();
+            let mut analyzer = RustAnalyzerish::new();
 
             match analyzer.get_type_hint(&file_path, line, column).await {
                 Ok(Some(type_info)) => {
@@ -400,7 +400,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzer::new();
+            let mut analyzer = RustAnalyzerish::new();
 
             match analyzer.get_definition(&file_path, line, column).await {
                 Ok(Some(definitions)) => {
