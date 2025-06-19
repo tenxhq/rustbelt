@@ -42,7 +42,7 @@ impl RuskelAnalyzer {
         // Generate the skeleton
         let skeleton = ruskel
             .render(private, false, false)
-            .map_err(|e| tenx_mcp::Error::InternalError(format!("Ruskel error: {}", e)))?;
+            .map_err(|e| tenx_mcp::Error::InternalError(format!("Ruskel error: {e}")))?;
         Ok(skeleton)
     }
 }

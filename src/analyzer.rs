@@ -10,8 +10,8 @@ use anyhow::{Context, Result, bail};
 use bimap::BiMap;
 use ra_ap_base_db::SourceRoot;
 use ra_ap_ide::{
-    AnalysisHost, FileId, FileRange, HoverConfig, HoverDocFormat, LineCol, SubstTyLen, TextRange,
-    TextSize,
+    AnalysisHost, FileId, FilePosition, FileRange, HoverConfig, HoverDocFormat, LineCol,
+    SubstTyLen, TextRange, TextSize,
 };
 use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap, SymbolKind};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
@@ -45,6 +45,37 @@ pub struct DefinitionInfo {
     pub module: String,
     /// Rustdoc description, if available
     pub description: Option<String>,
+}
+
+/// Information about a rename operation result
+#[derive(Debug, Clone)]
+pub struct RenameResult {
+    /// Files that will be changed by the rename operation
+    pub file_changes: Vec<FileChange>,
+}
+
+/// Information about changes to a single file during rename
+#[derive(Debug, Clone)]
+pub struct FileChange {
+    /// Path to the file that will be changed
+    pub file_path: String,
+    /// List of text edits to apply to this file
+    pub edits: Vec<TextEdit>,
+}
+
+/// A single text edit within a file
+#[derive(Debug, Clone)]
+pub struct TextEdit {
+    /// Line number (1-based) where the edit starts
+    pub line: u32,
+    /// Column number (1-based) where the edit starts
+    pub column: u32,
+    /// Line number (1-based) where the edit ends
+    pub end_line: u32,
+    /// Column number (1-based) where the edit ends
+    pub end_column: u32,
+    /// The text to replace the range with
+    pub new_text: String,
 }
 
 /// Main interface to rust-analyzer functionality
@@ -388,6 +419,147 @@ impl RustAnalyzer {
         }
     }
 
+    /// Rename a symbol at the specified cursor position and apply the changes
+    /// to disk
+    pub async fn rename_symbol(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        new_name: &str,
+    ) -> Result<Option<RenameResult>> {
+        // Get the rename information
+        let rename_result = self
+            .get_rename_info(file_path, line, column, new_name)
+            .await?;
+
+        if let Some(ref result) = rename_result {
+            // Apply the edits to disk
+            Self::apply_rename_edits(result).await?;
+        }
+
+        Ok(rename_result)
+    }
+
+    /// Get rename information without applying changes to disk
+    pub async fn get_rename_info(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+        new_name: &str,
+    ) -> Result<Option<RenameResult>> {
+        let path = PathBuf::from(file_path);
+
+        // Ensure the project/workspace is loaded
+        self.ensure_project_loaded(&path).await?;
+
+        // Load the file if not already loaded
+        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+
+        let analysis = self.host.analysis();
+
+        // Get the file's line index for position conversion
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        // Convert line/column to text offset from 1-based to 0-based indexing
+        let line_col = LineCol {
+            line: line.saturating_sub(1),
+            col: column.saturating_sub(1),
+        };
+        let offset = line_index
+            .offset(line_col)
+            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+
+        debug!(
+            "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",
+            file_id, offset, line, column, new_name
+        );
+
+        let position = FilePosition { file_id, offset };
+
+        // TODO Consider separating this to a separate tool
+        // First, prepare the rename to validate it's possible
+        // let prepare_result = match analysis.prepare_rename(position) {
+        //     Ok(result) => result,
+        //     Err(e) => {
+        //         warn!("Failed to prepare rename: {:?}", e);
+        //         bail!("Failed to prepare rename: {:?}", e)
+        //     }
+        // };
+
+        // let _prepare_range_info = match prepare_result {
+        //     Ok(range_info) => range_info,
+        //     Err(rename_error) => {
+        //         debug!("Rename not possible: {:?}", rename_error);
+        //         return Ok(None);
+        //     }
+        // };
+
+        // Perform the actual rename
+        let rename_result = match analysis.rename(position, new_name) {
+            Ok(result) => result,
+            Err(e) => {
+                warn!("Failed to perform rename: {:?}", e);
+                bail!("Failed to perform rename: {:?}", e)
+            }
+        };
+
+        let source_change = match rename_result {
+            Ok(source_change) => source_change,
+            Err(rename_error) => {
+                debug!("Rename failed: {:?}", rename_error);
+                return Ok(None);
+            }
+        };
+
+        // Convert SourceChange to our RenameResult format
+        let mut file_changes = Vec::new();
+
+        for (file_id, edit_tuple) in source_change.source_file_edits {
+            // Get file path from file_id
+            let file_path = if self.vfs.exists(file_id) {
+                let vfs_path = self.vfs.file_path(file_id);
+                vfs_path.to_string()
+            } else {
+                return Err(anyhow::anyhow!("File ID {:?} not found in VFS", file_id));
+            };
+
+            // Get line index for this file
+            let file_line_index = analysis
+                .file_line_index(file_id)
+                .map_err(|_| anyhow::anyhow!("Failed to get line index for file {:?}", file_id))?;
+
+            // Convert text edits - the tuple is (TextEdit, Option<SnippetEdit>)
+            let mut edits = Vec::new();
+            let text_edit = &edit_tuple.0; // Get the TextEdit from the tuple
+
+            for edit in text_edit.iter() {
+                let start_line_col = file_line_index.line_col(edit.delete.start());
+                let end_line_col = file_line_index.line_col(edit.delete.end());
+
+                edits.push(TextEdit {
+                    line: start_line_col.line + 1,  // Convert to 1-based
+                    column: start_line_col.col + 1, // Convert to 1-based
+                    end_line: end_line_col.line + 1,
+                    end_column: end_line_col.col + 1,
+                    new_text: edit.insert.clone(),
+                });
+            }
+
+            file_changes.push(FileChange { file_path, edits });
+        }
+
+        debug!(
+            "Rename successful: {} file(s) will be changed",
+            file_changes.len()
+        );
+
+        Ok(Some(RenameResult { file_changes }))
+    }
+
     /// Ensure the project workspace is loaded for the given file path
     async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<()> {
         let project_root = self.find_project_root(file_path)?;
@@ -595,5 +767,100 @@ impl RustAnalyzer {
 
         debug!("Loaded file: {} -> {:?}", path.display(), file_id);
         Ok(file_id)
+    }
+
+    /// Apply rename edits to files on disk using rust-analyzer's
+    /// TextEditBuilder
+    pub async fn apply_rename_edits(rename_result: &RenameResult) -> anyhow::Result<()> {
+        use ra_ap_ide::{TextRange, TextSize};
+        use ra_ap_ide_db::text_edit::TextEditBuilder;
+        use tokio::fs;
+
+        for file_change in &rename_result.file_changes {
+            // Read the current file content
+            let mut content = fs::read_to_string(&file_change.file_path)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to read file {}: {}", file_change.file_path, e)
+                })?;
+
+            // Create TextEditBuilder to handle multiple edits atomically
+            let mut builder = TextEditBuilder::default();
+
+            // Create line index for position conversion
+            let lines: Vec<&str> = content.lines().collect();
+
+            // Add all edits to the builder (no need to sort - TextEditBuilder handles
+            // ordering)
+            for edit in &file_change.edits {
+                // Convert 1-based line/column to character offset
+                let start_offset = Self::line_col_to_offset(&lines, edit.line, edit.column)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid start position {}:{} in file {}",
+                            edit.line,
+                            edit.column,
+                            file_change.file_path
+                        )
+                    })?;
+
+                let end_offset = Self::line_col_to_offset(&lines, edit.end_line, edit.end_column)
+                    .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Invalid end position {}:{} in file {}",
+                        edit.end_line,
+                        edit.end_column,
+                        file_change.file_path
+                    )
+                })?;
+
+                // Create rust-analyzer TextRange
+                let range = TextRange::new(
+                    TextSize::from(start_offset as u32),
+                    TextSize::from(end_offset as u32),
+                );
+
+                // Add the replacement to the builder
+                builder.replace(range, edit.new_text.clone());
+            }
+
+            // Build the TextEdit and apply it atomically
+            let text_edit = builder.finish();
+            text_edit.apply(&mut content);
+
+            // Write the modified content back to the file
+            fs::write(&file_change.file_path, content)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to write file {}: {}", file_change.file_path, e)
+                })?;
+        }
+
+        Ok(())
+    }
+
+    /// Convert 1-based line/column to 0-based character offset
+    fn line_col_to_offset(lines: &[&str], line: u32, column: u32) -> Option<usize> {
+        let line_idx = (line.saturating_sub(1)) as usize;
+        let col_idx = (column.saturating_sub(1)) as usize;
+
+        if line_idx >= lines.len() {
+            return None;
+        }
+
+        // Calculate offset by summing all characters in previous lines plus newlines
+        let mut offset = 0;
+        for line in lines.iter().take(line_idx) {
+            offset += line.len() + 1; // +1 for newline character
+        }
+
+        // Add column offset, but ensure it doesn't exceed line length
+        let line_content = lines[line_idx];
+        if col_idx > line_content.len() {
+            return None;
+        }
+
+        offset += col_idx;
+        Some(offset)
     }
 }

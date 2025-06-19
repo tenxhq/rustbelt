@@ -34,15 +34,18 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description | Parameters |
 |-----------|--------|-------------|------------|
-| `ruskel` | Implemented | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
-| `get_type_hint` | Implemented | Get type information for a symbol at cursor position | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
-| `get_definition` | Incomplete | Get definition for symbol at cursor position | `file_path`, `line`, `column` |
+| `ruskel` | Ready | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
+| `get_type_hint` | Alpha | Get type information for a symbol at cursor position | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
+| `get_definition` | Alpha | Get definition for symbol at cursor position | `file_path`, `line`, `column` |
+| `rename_symbol` | Alpha | Rename a symbol across the workspace | `file_path`, `line`, `column`, `new_name` |
 
 
 ## Planned Improvements
 
 ### General functionality
 
+- [ ] Include full canonical name in get_type_hint
+- [ ] Support `symbol_name` and `line_context` as an option for tools that require `line` and `column`
 - [ ] Cache rust-analyzer for test project so we can iterate on tests faster
 - [ ] Cache rust-analyzer analysis results to speed up subsequent queries on the same project
 - [ ] Only reload changed files instead of entire project on updates
@@ -55,7 +58,6 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description | Parameters |
 |-----------|--------|-------------|------------|
-| `rename_symbol` | Planned | Rename a symbol across the workspace | `file_path`, `line`, `column`, `new_name` |
 | `find_references` | Planned | Find all references to a symbol | `file_path`, `line`, `column` |
 | `get_completions` | Planned | Get code completion suggestions | `file_path`, `line`, `column` |
 | `get_signature_help` | Planned | Get function signature information | `file_path`, `line`, `column` |
@@ -63,6 +65,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 | `get_workspace_symbols` | Planned | Search for symbols across workspace | `query` |
 | `format_document` | Planned | Format a Rust document | `file_path` |
 | `get_diagnostics` | Planned | Get compiler errors and warnings | `file_path` |
+| `expand_macros` | Planned | | |
 
 ## Requirements
 
@@ -82,5 +85,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Related Projects
 
 - Powered by [tenx-mcp](https://github.com/tenxhq/tenx-mcp)
-- Relies on [ruskel](https://github.com/cortesi/ruskel) for generating Rust code skeletons
+- Relies on [ruskel](https://github.com/cortesi/ruskel) for generating Rust crate skeletons
 - Built on top of [rust-analyzer](https://github.com/rust-lang/rust-analyzer) internal crates

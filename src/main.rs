@@ -23,7 +23,7 @@ const VERSION: &str = "0.0.1";
 
 #[derive(Parser)]
 #[command(name = "rustbelt")]
-#[command(about = "Rust-Analyzer MCP Server")]
+#[command(about = "rustbelt MCP Server - power up your Rust development")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -84,6 +84,19 @@ struct GetDefinitionParams {
     line: u32,
     /// Column number (1-based)
     column: u32,
+}
+
+/// Parameters for the rename_symbol tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+struct RenameParams {
+    /// Absolute path to the Rust source file
+    file_path: String,
+    /// Line number (1-based)
+    line: u32,
+    /// Column number (1-based)
+    column: u32,
+    /// New name for the symbol
+    new_name: String,
 }
 
 /// Parameters for the ruskel tool
@@ -159,6 +172,13 @@ impl Connection for RustAnalyzerConnection {
                 .with_description(
                     "Get definition location for a symbol at the given cursor position",
                 ),
+            )
+            .with_tool(
+                Tool::new(
+                    "rename_symbol",
+                    ToolInputSchema::from_json_schema::<RenameParams>(),
+                )
+                .with_description("Rename a symbol across the workspace"),
             ))
     }
 
@@ -209,7 +229,7 @@ impl Connection for RustAnalyzerConnection {
                         let mut result_text = String::new();
                         // format!("Found {} definition(s):\n", definitions.len());
                         for def in definitions {
-                            result_text.push_str(&format!("{:?}\n", def));
+                            result_text.push_str(&format!("{def:?}\n"));
                         }
                         Ok(CallToolResult::new()
                             .with_text_content(result_text)
@@ -258,6 +278,57 @@ impl Connection for RustAnalyzerConnection {
                         .is_error(false)),
                     Err(e) => Ok(CallToolResult::new()
                         .with_text_content(format!("Error generating skeleton: {e}"))
+                        .is_error(true)),
+                }
+            }
+            "rename_symbol" => {
+                let params = match arguments {
+                    Some(args) => serde_json::from_value::<RenameParams>(args)?,
+                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
+                };
+
+                match self
+                    .analyzer
+                    .lock()
+                    .await
+                    .rename_symbol(
+                        &params.file_path,
+                        params.line,
+                        params.column,
+                        &params.new_name,
+                    )
+                    .await
+                {
+                    Ok(Some(rename_result)) => {
+                        let mut result_text = format!(
+                            "Successfully renamed symbol in {} file(s):\n\n",
+                            rename_result.file_changes.len()
+                        );
+
+                        for file_change in rename_result.file_changes {
+                            result_text.push_str(&format!("{}\n", file_change.file_path));
+                            for edit in file_change.edits {
+                                result_text.push_str(&format!(
+                                    "  ↳ {}:{}-{}:{} → '{}'\n",
+                                    edit.line,
+                                    edit.column,
+                                    edit.end_line,
+                                    edit.end_column,
+                                    edit.new_text
+                                ));
+                            }
+                            result_text.push('\n');
+                        }
+
+                        Ok(CallToolResult::new()
+                            .with_text_content(result_text)
+                            .is_error(false))
+                    }
+                    Ok(None) => Ok(CallToolResult::new()
+                        .with_text_content("Symbol cannot be renamed at this position")
+                        .is_error(false)),
+                    Err(e) => Ok(CallToolResult::new()
+                        .with_text_content(format!("Error performing rename: {e}"))
                         .is_error(true)),
                 }
             }
