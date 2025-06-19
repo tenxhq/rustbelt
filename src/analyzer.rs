@@ -80,7 +80,7 @@ pub struct TextEdit {
 
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
-pub struct RustAnalyzer {
+pub struct RustAnalyzerish {
     host: AnalysisHost,
     vfs: Vfs,
     loader: vfs_notify::NotifyHandle,
@@ -89,13 +89,13 @@ pub struct RustAnalyzer {
     current_project_root: Option<PathBuf>,
 }
 
-impl Default for RustAnalyzer {
+impl Default for RustAnalyzerish {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RustAnalyzer {
+impl RustAnalyzerish {
     /// Create a new RustAnalyzer instance
     pub fn new() -> Self {
         let (message_sender, message_receiver) = crossbeam_channel::unbounded();

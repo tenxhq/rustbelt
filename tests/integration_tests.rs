@@ -4,16 +4,16 @@ use std::{
 };
 
 use ra_ap_ide_db::SymbolKind;
-use rustbelt::analyzer::RustAnalyzer;
+use rustbelt::analyzer::RustAnalyzerish;
 use tokio::sync::Mutex;
 
 // Shared analyzer instance that gets initialized once
-static SHARED_ANALYZER: OnceLock<Arc<Mutex<RustAnalyzer>>> = OnceLock::new();
+static SHARED_ANALYZER: OnceLock<Arc<Mutex<RustAnalyzerish>>> = OnceLock::new();
 
 /// Get or initialize the shared analyzer instance
-async fn get_shared_analyzer() -> Arc<Mutex<RustAnalyzer>> {
+async fn get_shared_analyzer() -> Arc<Mutex<RustAnalyzerish>> {
     SHARED_ANALYZER
-        .get_or_init(|| Arc::new(Mutex::new(RustAnalyzer::new())))
+        .get_or_init(|| Arc::new(Mutex::new(RustAnalyzerish::new())))
         .clone()
 }
 
