@@ -42,30 +42,19 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 ## Planned Improvements
 
-### General functionality
+### Tools
 
-- [ ] Include full canonical name in get_type_hint
-- [ ] Support `symbol_name` and `line_context` as an option for tools that require `line` and `column`
-- [ ] Cache rust-analyzer for test project so we can iterate on tests faster
-- [ ] Cache rust-analyzer analysis results to speed up subsequent queries on the same project
-- [ ] Only reload changed files instead of entire project on updates
-- [ ] Implement LRU cache for loaded projects to manage memory usage
-- [ ] Handle multiple Rust projects simultaneously
-- [ ] Honor rust-analyzer and project-specific configurations
+| Tool Name | Status | Description                         | Parameters                    |
+|-----------|--------|-------------------------------------|-------------------------------|
+| `find_references` | Planned | Find all references to a symbol     | `file_path`, `line`, `column` |
+| `get_completions` | Planned | Get code completion suggestions     | `file_path`, `line`, `column` |
+| `get_signature_help` | Planned | Get function signature information  | `file_path`, `line`, `column` |
+| `get_document_symbols` | Planned | Get all symbols in a document       | `file_path`                   |
+| `get_workspace_symbols` | Planned | Search for symbols across workspace | `query`                       |
+| `format_document` | Planned | Format a Rust document              | `file_path`                   |
+| `get_diagnostics` | Planned | Get compiler errors and warnings    | `file_path`                   |
+| `expand_macros` | Planned | Expand all macros in a file | `file_path`                    |
 
-
-### Additional tools
-
-| Tool Name | Status | Description | Parameters |
-|-----------|--------|-------------|------------|
-| `find_references` | Planned | Find all references to a symbol | `file_path`, `line`, `column` |
-| `get_completions` | Planned | Get code completion suggestions | `file_path`, `line`, `column` |
-| `get_signature_help` | Planned | Get function signature information | `file_path`, `line`, `column` |
-| `get_document_symbols` | Planned | Get all symbols in a document | `file_path` |
-| `get_workspace_symbols` | Planned | Search for symbols across workspace | `query` |
-| `format_document` | Planned | Format a Rust document | `file_path` |
-| `get_diagnostics` | Planned | Get compiler errors and warnings | `file_path` |
-| `expand_macros` | Planned | | |
 
 ## Requirements
 

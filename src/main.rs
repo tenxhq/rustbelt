@@ -17,6 +17,7 @@ pub mod analyzer;
 pub mod ruskel;
 use analyzer::RustAnalyzerish;
 use ruskel::ruskel_analyzer::RuskelAnalyzer;
+use crate::analyzer::{DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint};
 
 const NAME: &str = "rustbelt";
 const VERSION: &str = "0.0.1";
@@ -202,7 +203,7 @@ impl Connection for RustAnalyzerConnection {
                     .await
                 {
                     Ok(Some(type_info)) => Ok(CallToolResult::new()
-                        .with_text_content(type_info)
+                        .with_text_content(type_info.to_string())
                         .is_error(false)),
                     Ok(None) => Ok(CallToolResult::new()
                         .with_text_content("No type information available at this position")
@@ -226,11 +227,12 @@ impl Connection for RustAnalyzerConnection {
                     .await
                 {
                     Ok(Some(definitions)) => {
-                        let mut result_text = String::new();
-                        // format!("Found {} definition(s):\n", definitions.len());
-                        for def in definitions {
-                            result_text.push_str(&format!("{def:?}\n"));
-                        }
+                        let result_text = definitions
+                            .iter()
+                            .map(|def| def.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
                         Ok(CallToolResult::new()
                             .with_text_content(result_text)
                             .is_error(false))
@@ -300,25 +302,7 @@ impl Connection for RustAnalyzerConnection {
                     .await
                 {
                     Ok(Some(rename_result)) => {
-                        let mut result_text = format!(
-                            "Successfully renamed symbol in {} file(s):\n\n",
-                            rename_result.file_changes.len()
-                        );
-
-                        for file_change in rename_result.file_changes {
-                            result_text.push_str(&format!("{}\n", file_change.file_path));
-                            for edit in file_change.edits {
-                                result_text.push_str(&format!(
-                                    "  ↳ {}:{}-{}:{} → '{}'\n",
-                                    edit.line,
-                                    edit.column,
-                                    edit.end_line,
-                                    edit.end_column,
-                                    edit.new_text
-                                ));
-                            }
-                            result_text.push('\n');
-                        }
+                        let result_text = rename_result.to_string();
 
                         Ok(CallToolResult::new()
                             .with_text_content(result_text)
@@ -406,10 +390,7 @@ async fn main() -> Result<()> {
                 Ok(Some(definitions)) => {
                     println!("Found {} definition(s):", definitions.len());
                     for def in definitions {
-                        println!(
-                            "  {}:{}:{} - {} ({:?})",
-                            def.file_path, def.line, def.column, def.name, def.kind
-                        );
+                        println!("  {def}");
                     }
                 }
                 Ok(None) => {
@@ -425,4 +406,55 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+impl std::fmt::Display for TypeHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.symbol, self.short_type)
+    }
+}
+
+impl std::fmt::Display for DefinitionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{} - {} ({:?})",
+            self.file_path, self.line, self.column, self.name, self.kind
+        )
+    }
+}
+
+impl std::fmt::Display for RenameResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "Successfully renamed symbol in {} file(s):",
+            self.file_changes.len()
+        )?;
+        writeln!(f)?;
+        for file_change in &self.file_changes {
+            writeln!(f, "{file_change}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for FileChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.file_path)?;
+        for edit in &self.edits {
+            writeln!(f, "  ↳ {edit}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for TextEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}-{}:{} → '{}'",
+            self.line, self.column, self.end_line, self.end_column, self.new_text
+        )
+    }
 }

@@ -78,6 +78,19 @@ pub struct TextEdit {
     pub new_text: String,
 }
 
+/// A type hint for a given symbol
+#[derive(Debug, Clone)]
+pub struct TypeHint {
+    pub file_path: String,
+    /// Line number (1-based) where the edit starts
+    pub line: u32,
+    /// Column number (1-based) where the edit starts
+    pub column: u32,
+    pub symbol: String,
+    pub short_type: String,
+    pub canonical_type: String,
+}
+
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
 pub struct RustAnalyzerish {
@@ -120,7 +133,7 @@ impl RustAnalyzerish {
         file_path: &str,
         line: u32,
         column: u32,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<TypeHint>> {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
@@ -212,7 +225,7 @@ impl RustAnalyzerish {
             };
 
         // Combine symbol name with type information
-        let result = if let Some(name) = symbol_name {
+        let result = if let Some(ref name) = symbol_name {
             format!("{name}: {type_info}")
         } else {
             type_info.to_string()
@@ -222,7 +235,17 @@ impl RustAnalyzerish {
             "Got type hint for {}:{}:{}: {}",
             file_path, line, column, result
         );
-        Ok(Some(result))
+
+        let type_hint = TypeHint {
+            file_path: file_path.to_string(),
+            line,
+            column,
+            symbol: symbol_name.unwrap_or_else(|| "unknown".to_string()),
+            short_type: type_info.to_string(),
+            canonical_type: type_info.to_string(), // TODO
+        };
+
+        Ok(Some(type_hint))
     }
 
     /// Get definition information at the specified cursor position
@@ -664,6 +687,7 @@ impl RustAnalyzerish {
             });
 
             // Process VFS messages
+            // TODO Perform this in a concurrent tokio task
             for message in &self.message_receiver {
                 match message {
                     ra_ap_vfs::loader::Message::Progress { n_done, .. } => {
@@ -793,6 +817,23 @@ impl RustAnalyzerish {
             // Add all edits to the builder (no need to sort - TextEditBuilder handles
             // ordering)
             for edit in &file_change.edits {
+                // TODO use line_index.offset
+
+                // Get the file's line index for position conversion
+                // let line_index = analysis
+                // .file_line_index(file_id)
+                // .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+                // Convert line/column to text offset from 1-based to 0-based indexing
+                // let line_col = LineCol {
+                //     line: line.saturating_sub(1),
+                //     col: column.saturating_sub(1),
+                // };
+                // let offset = line_index
+                //     .offset(line_col)
+                //     .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}",
+                // line, column))?;
+
                 // Convert 1-based line/column to character offset
                 let start_offset = Self::line_col_to_offset(&lines, edit.line, edit.column)
                     .ok_or_else(|| {
@@ -839,6 +880,7 @@ impl RustAnalyzerish {
         Ok(())
     }
 
+    // TODO Use ra line_index.offset instead of this implementation
     /// Convert 1-based line/column to 0-based character offset
     fn line_col_to_offset(lines: &[&str], line: u32, column: u32) -> Option<usize> {
         let line_idx = (line.saturating_sub(1)) as usize;
