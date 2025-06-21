@@ -55,6 +55,9 @@ rustbelt type-hint /path/to/file.rs 10 15
 | `get_diagnostics` | Planned | Get compiler errors and warnings    | `file_path`                   |
 | `expand_macros` | Planned | Expand all macros in a file | `file_path`                    |
 
+### General improvements
+
+See TODO.md
 
 ## Requirements
 

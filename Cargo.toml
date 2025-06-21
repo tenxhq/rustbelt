@@ -53,3 +53,8 @@ libruskel = "0.0.10"
 [[bin]]
 name = "rustbelt"
 path = "src/main.rs"
+
+
+[build-dependencies]
+anyhow = "1.0.98"
+vergen-gix = { version = "1.0.9", features = ["build"] }
