@@ -1,6 +1,6 @@
-//! Integration tests for the MCP server
+//! Integration tests for the MCP mcp
 //!
-//! These tests verify the MCP server protocol implementation using the tenx-mcp
+//! These tests verify the MCP mcp protocol implementation using the tenx-mcp
 //! client.
 
 use std::{process::Command, time::Duration};
@@ -11,18 +11,26 @@ use tenx_mcp::{
     error::Result,
     schema::{ClientCapabilities, Implementation, InitializeResult},
 };
-use tokio::{process::Command as TokioCommand, time::timeout};
+use tokio::{
+    process::Command as TokioCommand,
+    time::{sleep, timeout},
+};
 
-/// Helper to create a test MCP client connected to the rustbelt server process
+/// Helper to create a test MCP client connected to the rustbelt mcp process
 async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
     // Get the workspace root - this is the current project directory
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace_root = std::path::Path::new(manifest_dir);
+    let workspace_root = std::path::Path::new(manifest_dir)
+        .parent() // crates
+        .unwrap()
+        .parent() // workspace root
+        .unwrap();
 
+    println!("{:?}", workspace_root);
     // First ensure the binary is built
     let output = Command::new("cargo")
         .current_dir(workspace_root)
-        .args(["build", "--bin", "rustbelt"])
+        .args(["build"])
         .output()
         .expect("Failed to build rustbelt");
 
@@ -41,6 +49,7 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
         "release"
     };
     let binary_path = target_dir.join(profile).join("rustbelt");
+    println!("{:?}", binary_path);
 
     // Create client and connect to process
     let mut client = Client::new().with_request_timeout(Duration::from_secs(30));
@@ -227,6 +236,9 @@ async fn test_mcp_server_multiple_requests() {
         if let Ok(call_result) = result {
             assert!(!call_result.content.is_empty());
         }
+
+        // Small delay to avoid cargo lock conflicts
+        sleep(Duration::from_millis(100)).await;
     }
 
     // Clean up
@@ -256,7 +268,7 @@ async fn test_mcp_server_error_recovery() {
         .await;
     assert!(result.is_err());
 
-    // 3. Valid request after error (server should recover)
+    // 3. Valid request after error (mcp should recover)
     let result = timeout(Duration::from_secs(10), client.list_tools())
         .await
         .expect("Timeout listing tools after error")

@@ -1,0 +1,45 @@
+[package]
+name = "librustbelt"
+keywords = ["lsp", "rust-analyzer"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# rust-analyzer core functionality
+ra_ap_base_db = { workspace = true }
+ra_ap_cfg = { workspace = true }
+ra_ap_ide = { workspace = true }
+ra_ap_ide_db = { workspace = true }
+ra_ap_intern = { workspace = true }
+ra_ap_project_model = { workspace = true }
+ra_ap_syntax = { workspace = true }
+ra_ap_vfs = { workspace = true }
+ra_ap_vfs-notify = { workspace = true }
+
+# rust-analyzer transitive dependencies
+triomphe = { workspace = true }
+crossbeam-channel = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+bimap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging for the ruskel tool
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,37 @@
+[package]
+name = "rustbelt-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+librustbelt = { path = "../librustbelt" }
+
+# MCP support
+tenx-mcp = { git = "https://github.com/tenxhq/tenx-mcp.git", rev = "5ee6c00"}
+
+# Rust code skeleton generation
+libruskel = "0.0.10"
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Build dependencies for version info
+[build-dependencies]
+anyhow = { workspace = true }
+vergen-gix = { workspace = true }

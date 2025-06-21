@@ -1,23 +1,19 @@
-//! Rust-Analyzer MCP Server
+//! rustbelt MCP Server
 //!
-//! This server provides rust-analyzer functionality via the Model Context
+//! This mcp provides rust-analyzer functionality via the Model Context
 //! Protocol (MCP). It exposes IDE capabilities like type hints,
 //! go-to-definition, and more as MCP tools.
+
+mod ruskel;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use clap::{Parser, Subcommand};
+use librustbelt::RustAnalyzerish;
 use serde::{Deserialize, Serialize};
-use tenx_mcp::{Result, Server, connection::Connection, error::Error, schema::*, schemars};
+use tenx_mcp::{Result, connection::Connection, error::Error, schema::*, schemars};
 use tokio::sync::Mutex;
 use tracing::info;
-
-pub mod analyzer;
-pub mod ruskel;
-use analyzer::RustAnalyzerish;
-use ruskel::ruskel_analyzer::RuskelAnalyzer;
-use crate::analyzer::{DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint};
 
 const NAME: &str = "rustbelt";
 
@@ -30,116 +26,70 @@ pub const VERSION: &str = concat!(
     ")"
 );
 
-
-#[derive(Parser)]
-#[command(name = "rustbelt")]
-#[command(about = "rustbelt MCP Server - power up your Rust development")]
-#[command(version = VERSION)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Start the MCP server
-    Serve {
-        /// Use stdio mode (recommended for MCP clients)
-        #[arg(long)]
-        stdio: bool,
-        /// Host for TCP mode
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        /// Port for TCP mode
-        #[arg(long, default_value = "3001")]
-        port: u16,
-    },
-    /// Get type hint for a specific position
-    TypeHint {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// Get definition details for a symbol at a specific position
-    GetDefinition {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-}
-
 /// Parameters for the get_type_hint tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-struct TypeHintParams {
+pub struct TypeHintParams {
     /// Absolute path to the Rust source file
-    file_path: String,
+    pub file_path: String,
     /// Line number (1-based)
-    line: u32,
+    pub line: u32,
     /// Column number (1-based)
-    column: u32,
+    pub column: u32,
 }
 
 /// Parameters for the get_definition tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-struct GetDefinitionParams {
+pub struct GetDefinitionParams {
     /// Absolute path to the Rust source file
-    file_path: String,
+    pub file_path: String,
     /// Line number (1-based)
-    line: u32,
+    pub line: u32,
     /// Column number (1-based)
-    column: u32,
+    pub column: u32,
 }
 
 /// Parameters for the rename_symbol tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-struct RenameParams {
+pub struct RenameParams {
     /// Absolute path to the Rust source file
-    file_path: String,
+    pub file_path: String,
     /// Line number (1-based)
-    line: u32,
+    pub line: u32,
     /// Column number (1-based)
-    column: u32,
+    pub column: u32,
     /// New name for the symbol
-    new_name: String,
+    pub new_name: String,
 }
 
 /// Parameters for the ruskel tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-struct RuskelParams {
+pub struct RuskelParams {
     /// Target specification (crate path, published crate name, or module path)
-    target: String,
+    pub target: String,
     /// Optional specific features to enable
     #[serde(default)]
-    features: Vec<String>,
+    pub features: Vec<String>,
     /// Enable all features
     #[serde(default)]
-    all_features: bool,
+    pub all_features: bool,
     /// Disable default features
     #[serde(default)]
-    no_default_features: bool,
+    pub no_default_features: bool,
     /// Include private items in the skeleton
     #[serde(default)]
-    private: bool,
+    pub private: bool,
 }
 
-/// Rust-Analyzer MCP server connection
+/// Rust-Analyzer MCP mcp connection
 #[derive(Debug, Clone)]
-struct RustAnalyzerConnection {
+pub struct RustAnalyzerConnection {
     analyzer: Arc<Mutex<RustAnalyzerish>>,
-    ruskel_analyzer: Arc<Mutex<RuskelAnalyzer>>,
 }
 
 impl Default for RustAnalyzerConnection {
     fn default() -> Self {
         Self {
             analyzer: Arc::new(Mutex::new(RustAnalyzerish::new())),
-            ruskel_analyzer: Arc::new(Mutex::new(RuskelAnalyzer::new())),
         }
     }
 }
@@ -271,18 +221,14 @@ impl Connection for RustAnalyzerConnection {
                     }
                 };
 
-                match self
-                    .ruskel_analyzer
-                    .lock()
-                    .await
-                    .generate_skeleton(
-                        &params.target,
-                        &params.features,
-                        params.all_features,
-                        params.no_default_features,
-                        params.private,
-                    )
-                    .await
+                match ruskel::generate_skeleton(
+                    &params.target,
+                    &params.features,
+                    params.all_features,
+                    params.no_default_features,
+                    params.private,
+                )
+                .await
                 {
                     Ok(skeleton) => Ok(CallToolResult::new()
                         .with_text_content(skeleton)
@@ -330,140 +276,18 @@ impl Connection for RustAnalyzerConnection {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Serve { stdio, host, port } => {
-            // Only initialize logging for TCP mode
-            // In stdio mode, logging would interfere with JSON-RPC communication
-            if !stdio {
-                tracing_subscriber::fmt::init();
-            }
-
-            if stdio {
-                // Run in stdio mode - recommended for MCP clients
-                Server::default()
-                    .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
-                    .serve_stdio()
-                    .await?;
-            } else {
-                // Run in TCP mode for debugging
-                let addr = format!("{host}:{port}");
-                info!("Starting Rust-Analyzer MCP server on {}", addr);
-
-                Server::default()
-                    .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
-                    .serve_tcp(addr)
-                    .await?;
-            }
-        }
-        Commands::TypeHint {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
-
-            match analyzer.get_type_hint(&file_path, line, column).await {
-                Ok(Some(type_info)) => {
-                    println!("The type information is:\n{type_info}");
-                }
-                Ok(None) => {
-                    eprintln!("No type information available at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting type hint: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::GetDefinition {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
-
-            match analyzer.get_definition(&file_path, line, column).await {
-                Ok(Some(definitions)) => {
-                    println!("Found {} definition(s):", definitions.len());
-                    for def in definitions {
-                        println!("  {def}");
-                    }
-                }
-                Ok(None) => {
-                    eprintln!("No definitions found at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting definitions: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-    }
-
-    Ok(())
+pub async fn serve_stdio() -> Result<()> {
+    tenx_mcp::Server::default()
+        .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
+        .serve_stdio()
+        .await
 }
 
-impl std::fmt::Display for TypeHint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.symbol, self.short_type)
-    }
-}
+pub async fn serve_tcp(addr: String) -> Result<()> {
+    info!("Starting Rust-Analyzer MCP mcp on {}", addr);
 
-impl std::fmt::Display for DefinitionInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}:{} - {} ({:?})",
-            self.file_path, self.line, self.column, self.name, self.kind
-        )
-    }
-}
-
-impl std::fmt::Display for RenameResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "Successfully renamed symbol in {} file(s):",
-            self.file_changes.len()
-        )?;
-        writeln!(f)?;
-        for file_change in &self.file_changes {
-            writeln!(f, "{file_change}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for FileChange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.file_path)?;
-        for edit in &self.edits {
-            writeln!(f, "  ↳ {edit}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for TextEdit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}-{}:{} → '{}'",
-            self.line, self.column, self.end_line, self.end_column, self.new_text
-        )
-    }
+    tenx_mcp::Server::default()
+        .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
+        .serve_tcp(addr)
+        .await
 }

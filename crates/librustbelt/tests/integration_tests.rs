@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use librustbelt::analyzer::RustAnalyzerish;
 use ra_ap_ide_db::SymbolKind;
-use rustbelt::analyzer::RustAnalyzerish;
 use tokio::sync::Mutex;
 
 // Shared analyzer instance that gets initialized once
@@ -38,7 +38,10 @@ async fn test_type_hint_simple_variable() {
         .expect("Expected type info but got None");
 
     println!("Type info for 'people': {}", type_info);
-    assert!(type_info.contains("HashMap") || type_info.contains("std::collections"));
+    assert!(
+        type_info.canonical_type.contains("HashMap")
+            || type_info.canonical_type.contains("std::collections")
+    );
 }
 
 #[tokio::test]
@@ -56,7 +59,11 @@ async fn test_type_hint_function_call() {
         .expect("Expected type info but got None");
 
     println!("Type info for function result: {}", type_info);
-    assert!(type_info.contains("pub fn insert(&mut self, k: K, v: V) -> Option<V>"));
+    assert!(
+        type_info
+            .canonical_type
+            .contains("pub fn insert(&mut self, k: K, v: V) -> Option<V>")
+    );
 }
 
 #[tokio::test]
@@ -74,8 +81,9 @@ async fn test_type_hint_complex_generic() {
     if let Some(type_info) = result {
         println!("Type info for complex generic: {}", type_info);
         assert!(
-            type_info.contains("Vec")
-                && (type_info.contains("Option") || type_info.contains("Result"))
+            type_info.canonical_type.contains("Vec")
+                && (type_info.canonical_type.contains("Option")
+                    || type_info.canonical_type.contains("Result"))
         );
     } else {
         // Complex generics might not always have hover info available
@@ -290,12 +298,12 @@ async fn test_type_hint_variable_with_name() {
 
     // Should contain both the variable name and type
     assert!(
-        type_info.contains("numbers"),
+        type_info.symbol.contains("numbers"),
         "Should contain variable name 'numbers'"
     );
     // TODO Why is Vec<i32> not showing up?
     assert!(
-        type_info.contains("Vec<i32, Global>"),
+        type_info.canonical_type.contains("Vec<i32, Global>"),
         "Should contain type Vec<i32, Global>"
     );
     // TODO This would be nice, but it doesn't show up in the type info

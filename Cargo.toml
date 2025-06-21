@@ -1,15 +1,19 @@
-[package]
-name = "rustbelt"
+[workspace.package]
 version = "0.0.1"
 edition = "2024"
 authors = ["David Gomez Urquiza <d@davo.io>"]
-description = "A set of Rust specific tools to provide enhanced tools via the MCP protocol. These tools provide IDE functionality like type hints, go-to-definition, and semantic analysis."
+description = "MCP server for rustbelt providing Rust development tools via MCP protocol"
 license = "MIT"
 repository = "https://github.com/tenxhq/rustbelt"
-readme = "README.md"
-keywords = ["lsp", "mcp", "rust-analyzer", "AI assistance"]
+keywords = ["lsp", "mcp", "rust-analyzer"]
 
-[dependencies]
+
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+exclude = ["crates/librustbelt/tests/sample-project"]
+
+[workspace.dependencies]
 # rust-analyzer core functionality
 ra_ap_base_db = "0.0.288"
 ra_ap_cfg = "0.0.288"
@@ -24,9 +28,6 @@ ra_ap_vfs-notify = "0.0.288"
 # rust-analyzer transitive dependencies
 triomphe = "0.1"
 crossbeam-channel = "0.5"
-
-# MCP support
-tenx-mcp = { git = "https://github.com/tenxhq/tenx-mcp.git", rev = "5ee6c00"}
 
 # Async runtime
 tokio = { version = "1.45", features = ["full"] }
@@ -43,18 +44,7 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-# CLI argument parsing
-clap = { version = "4.5", features = ["derive"] }
 bimap = "0.6.3"
 
-# Rust code skeleton generation
-libruskel = "0.0.10"
-
-[[bin]]
-name = "rustbelt"
-path = "src/main.rs"
-
-
-[build-dependencies]
-anyhow = "1.0.98"
+# Build dependencies
 vergen-gix = { version = "1.0.9", features = ["build"] }

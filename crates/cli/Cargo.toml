@@ -1,0 +1,35 @@
+[package]
+name = "rustbelt"
+keywords = ["lsp", "mcp", "rust-analyzer", "cli"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rustbelt"
+path = "src/main.rs"
+
+[dependencies]
+librustbelt = { path = "../librustbelt" }
+rustbelt-server = { path = "../mcp" }
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Build dependencies for version info
+[build-dependencies]
+anyhow = { workspace = true }
+vergen-gix = { workspace = true }

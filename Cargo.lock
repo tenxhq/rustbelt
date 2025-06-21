@@ -3456,6 +3456,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "librustbelt"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bimap",
+ "crossbeam-channel",
+ "ra_ap_base_db",
+ "ra_ap_cfg",
+ "ra_ap_ide",
+ "ra_ap_ide_db",
+ "ra_ap_intern",
+ "ra_ap_project_model",
+ "ra_ap_syntax",
+ "ra_ap_vfs",
+ "ra_ap_vfs-notify",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "triomphe",
+]
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4863,27 +4888,29 @@ name = "rustbelt"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "async-trait",
- "bimap",
  "clap",
- "crossbeam-channel",
+ "librustbelt",
+ "rustbelt-server",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vergen-gix",
+]
+
+[[package]]
+name = "rustbelt-server"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
  "libruskel",
- "ra_ap_base_db",
- "ra_ap_cfg",
- "ra_ap_ide",
- "ra_ap_ide_db",
- "ra_ap_intern",
- "ra_ap_project_model",
- "ra_ap_syntax",
- "ra_ap_vfs",
- "ra_ap_vfs-notify",
+ "librustbelt",
  "serde",
  "serde_json",
  "tenx-mcp",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "triomphe",
  "vergen-gix",
 ]
 

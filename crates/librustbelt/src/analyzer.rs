@@ -906,3 +906,54 @@ impl RustAnalyzerish {
         Some(offset)
     }
 }
+
+impl std::fmt::Display for TypeHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.symbol, self.short_type)
+    }
+}
+
+impl std::fmt::Display for DefinitionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{} - {} ({:?})",
+            self.file_path, self.line, self.column, self.name, self.kind
+        )
+    }
+}
+
+impl std::fmt::Display for RenameResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "Successfully renamed symbol in {} file(s):",
+            self.file_changes.len()
+        )?;
+        writeln!(f)?;
+        for file_change in &self.file_changes {
+            writeln!(f, "{file_change}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for FileChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.file_path)?;
+        for edit in &self.edits {
+            writeln!(f, "  ↳ {edit}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for TextEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}-{}:{} → '{}'",
+            self.line, self.column, self.end_line, self.end_column, self.new_text
+        )
+    }
+}
