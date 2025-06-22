@@ -19,7 +19,7 @@ rustbelt serve
 Or start in TCP mode for debugging:
 
 ```bash
-rustbelt serve --host 127.0.0.1 --port 3001
+rustbelt serve --tcp --host 127.0.0.1 --port 3001
 ```
 
 ### CLI Mode
