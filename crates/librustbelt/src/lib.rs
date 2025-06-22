@@ -1,11 +1,7 @@
-//! librustbelt - Core library for rustbelt MCP mcp
+//! librustbelt - Core library for rustbelt
 //!
-//! Provides rust-analyzer functionality and ruskel code skeleton generation
+//! Provides simple interfaces for AI tools to interact with Rust code.
 
 pub mod analyzer;
-// pub mod ruskel {
-//     pub mod ruskel_analyzer;
-// }
 
 pub use analyzer::{DefinitionInfo, FileChange, RenameResult, RustAnalyzerish, TextEdit, TypeHint};
-// pub use ruskel::ruskel_analyzer::RuskelAnalyzer;

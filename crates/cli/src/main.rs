@@ -6,7 +6,6 @@
 use clap::{Parser, Subcommand};
 use librustbelt::RustAnalyzerish;
 use rustbelt_server::VERSION;
-use tracing_subscriber;
 
 #[derive(Parser)]
 #[command(name = "rustbelt")]
