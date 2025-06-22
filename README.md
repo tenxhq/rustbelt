@@ -10,10 +10,10 @@ rustbelt bridges rust-analyzer's powerful IDE capabilities with the Model Contex
 
 ### MCP Server Mode (Recommended)
 
-Start the server in stdio mode for MCP clients:
+Start the server in stdio mode for MCP clients (default):
 
 ```bash
-rustbelt serve --stdio
+rustbelt serve
 ```
 
 Or start in TCP mode for debugging:

@@ -18,11 +18,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the MCP mcp
+    /// Start the MCP server (defaults to stdio mode)
     Serve {
-        /// Use stdio mode (recommended for MCP clients)
+        /// Use TCP mode instead of default stdio mode
         #[arg(long)]
-        stdio: bool,
+        tcp: bool,
         /// Host for TCP mode
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
@@ -55,20 +55,20 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve { stdio, host, port } => {
+        Commands::Serve { tcp, host, port } => {
             // Only initialize logging for TCP mode
             // In stdio mode, logging would interfere with JSON-RPC communication
-            if !stdio {
+            if tcp {
                 tracing_subscriber::fmt::init();
             }
 
-            if stdio {
-                // Run in stdio mode - recommended for MCP clients
-                rustbelt_server::serve_stdio().await?;
-            } else {
+            if tcp {
                 // Run in TCP mode for debugging
                 let addr = format!("{host}:{port}");
                 rustbelt_server::serve_tcp(addr).await?;
+            } else {
+                // Run in stdio mode - recommended for MCP clients (default)
+                rustbelt_server::serve_stdio().await?;
             }
         }
         Commands::TypeHint {
