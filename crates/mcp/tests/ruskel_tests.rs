@@ -55,7 +55,7 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
     let mut client = Client::new().with_request_timeout(Duration::from_secs(30));
 
     let mut cmd = TokioCommand::new(binary_path);
-    cmd.arg("serve").arg("--stdio");
+    cmd.arg("serve");
 
     let child = client.connect_process(cmd).await?;
 
