@@ -48,6 +48,17 @@ pub struct GetDefinitionParams {
     pub column: u32,
 }
 
+/// Parameters for the get_completions tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetCompletionsParams {
+    /// Absolute path to the Rust source file
+    pub file_path: String,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
+}
+
 /// Parameters for the rename_symbol tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RenameParams {
@@ -135,6 +146,13 @@ impl Connection for RustAnalyzerConnection {
             )
             .with_tool(
                 Tool::new(
+                    "get_completions",
+                    ToolInputSchema::from_json_schema::<GetCompletionsParams>(),
+                )
+                .with_description("Get completion suggestions at the given cursor position"),
+            )
+            .with_tool(
+                Tool::new(
                     "rename_symbol",
                     ToolInputSchema::from_json_schema::<RenameParams>(),
                 )
@@ -201,6 +219,38 @@ impl Connection for RustAnalyzerConnection {
                         .is_error(false)),
                     Err(e) => Ok(CallToolResult::new()
                         .with_text_content(format!("Error getting definitions: {e}"))
+                        .is_error(true)),
+                }
+            }
+            "get_completions" => {
+                let params = match arguments {
+                    Some(args) => serde_json::from_value::<GetCompletionsParams>(args)?,
+                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
+                };
+
+                match self
+                    .analyzer
+                    .lock()
+                    .await
+                    .get_completions(&params.file_path, params.line, params.column)
+                    .await
+                {
+                    Ok(Some(completions)) => {
+                        let result_text = completions
+                            .iter()
+                            .map(|comp| comp.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        Ok(CallToolResult::new()
+                            .with_text_content(result_text)
+                            .is_error(false))
+                    }
+                    Ok(None) => Ok(CallToolResult::new()
+                        .with_text_content("No completions found at this position")
+                        .is_error(false)),
+                    Err(e) => Ok(CallToolResult::new()
+                        .with_text_content(format!("Error getting completions: {e}"))
                         .is_error(true)),
                 }
             }

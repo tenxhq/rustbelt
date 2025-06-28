@@ -109,10 +109,11 @@ async fn test_mcp_server_list_tools() {
         .expect("Failed to list tools");
 
     // Verify response
-    assert_eq!(result.tools.len(), 4);
+    assert_eq!(result.tools.len(), 5);
     let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_str()).collect();
     assert!(tool_names.contains(&"get_type_hint"));
     assert!(tool_names.contains(&"get_definition"));
+    assert!(tool_names.contains(&"get_completions"));
     assert!(tool_names.contains(&"ruskel"));
     assert!(tool_names.contains(&"rename_symbol"));
 
@@ -302,6 +303,53 @@ async fn test_mcp_server_error_recovery() {
     if let Ok(call_result) = result {
         assert!(!call_result.content.is_empty());
     }
+
+    // Clean up
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn test_mcp_get_completions_tool() {
+    let (mut client, mut child) = create_test_client()
+        .await
+        .expect("Failed to create test client");
+
+    let _init_result = initialize_client(&mut client)
+        .await
+        .expect("Failed to initialize");
+
+    // Get the path to our sample project main.rs file
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = std::path::Path::new(manifest_dir)
+        .parent() // crates
+        .unwrap()
+        .parent() // workspace root
+        .unwrap();
+    let sample_file = workspace_root.join("crates/librustbelt/tests/sample-project/src/main.rs");
+
+    // Call get_completions tool
+    let arguments = Some(json!({
+        "file_path": sample_file.to_string_lossy(),
+        "line": 31,
+        "column": 18
+    }));
+
+    let result = timeout(
+        Duration::from_secs(30),
+        client.call_tool("get_completions", &arguments),
+    )
+    .await
+    .expect("Timeout during get_completions call")
+    .expect("Failed to call get_completions tool");
+
+    // Verify response - should either have completions or indicate none were found
+    assert!(!result.content.is_empty());
+    assert!(
+        !result.is_error.unwrap_or(false),
+        "get_completions tool should not error"
+    );
+
+    println!("Completions result: {:?}", result.content);
 
     // Clean up
     let _ = child.kill().await;

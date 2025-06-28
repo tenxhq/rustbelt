@@ -10,10 +10,14 @@ use anyhow::{Context, Result, bail};
 use bimap::BiMap;
 use ra_ap_base_db::SourceRoot;
 use ra_ap_ide::{
-    AnalysisHost, FileId, FilePosition, FileRange, HoverConfig, HoverDocFormat, LineCol,
-    SubstTyLen, TextRange, TextSize,
+    AnalysisHost, CallableSnippets, CompletionConfig, CompletionFieldsToResolve,
+    CompletionItemKind as RaCompletionItemKind, FileId, FilePosition, FileRange, HoverConfig,
+    HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize,
 };
-use ra_ap_ide_db::{ChangeWithProcMacros, FxHashMap, SymbolKind};
+use ra_ap_ide_db::{
+    ChangeWithProcMacros, FxHashMap, SymbolKind,
+    imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind},
+};
 use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
 use ra_ap_vfs::{
     AbsPathBuf, Vfs, VfsPath,
@@ -89,6 +93,29 @@ pub struct TypeHint {
     pub symbol: String,
     pub short_type: String,
     pub canonical_type: String,
+}
+
+/// A completion item for a given cursor position
+#[derive(Debug, Clone)]
+pub struct CompletionItem {
+    /// The primary name/identifier
+    pub name: String,
+    /// Alternative names (aliases)
+    // pub aliases: Vec<String>,
+    /// Required import
+    pub required_import: Option<String>,
+    /// The trait this method comes from (for trait methods)
+    // pub trait_source: Option<String>,
+    /// The kind of completion (function, variable, etc.)
+    pub kind: Option<String>,
+    /// The text to insert when this completion is selected
+    // pub insert_text: String,
+    /// Function signature or type information
+    pub signature: Option<String>,
+    /// Documentation for this completion
+    pub documentation: Option<String>,
+    /// Whether this completion is deprecated
+    pub deprecated: bool,
 }
 
 /// Main interface to rust-analyzer functionality
@@ -246,6 +273,139 @@ impl RustAnalyzerish {
         };
 
         Ok(Some(type_hint))
+    }
+
+    /// Get completion suggestions at the specified cursor position
+    pub async fn get_completions(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        let path = PathBuf::from(file_path);
+
+        self.ensure_project_loaded(&path).await?;
+
+        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+
+        let analysis = self.host.analysis();
+
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        let line_col = LineCol {
+            line: line.saturating_sub(1),
+            col: column.saturating_sub(1),
+        };
+        let offset = line_index
+            .offset(line_col)
+            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+
+        debug!(
+            "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
+            file_id, offset, line, column
+        );
+
+        let position = FilePosition { file_id, offset };
+
+        let config = CompletionConfig {
+            enable_postfix_completions: true,
+            enable_imports_on_the_fly: false, // Keep simple for now
+            enable_self_on_the_fly: false,
+            enable_auto_iter: true,
+            enable_auto_await: true,
+            enable_private_editable: false,
+            enable_term_search: false,
+            term_search_fuel: 400,
+            full_function_signatures: false,
+            callable: Some(CallableSnippets::FillArguments),
+            add_semicolon_to_unit: false,
+            snippet_cap: None, // Disable snippets for simplicity
+            insert_use: InsertUseConfig {
+                granularity: ImportGranularity::Crate,
+                enforce_granularity: true,
+                prefix_kind: PrefixKind::Plain,
+                group: true,
+                skip_glob_imports: true,
+            },
+            prefer_no_std: false,
+            prefer_prelude: true,
+            prefer_absolute: false,
+            snippets: vec![],
+            limit: Some(200), // Limit results for performance
+            fields_to_resolve: CompletionFieldsToResolve::empty(),
+            exclude_flyimport: vec![],
+            exclude_traits: &[],
+        };
+
+        match analysis.completions(&config, position, Some('.')) {
+            Ok(Some(ra_completions)) => {
+                let mut completions = Vec::new();
+
+                for ra_completion in ra_completions {
+                    // Convert rust-analyzer CompletionItem to our CompletionItem
+                    let kind = match ra_completion.kind {
+                        RaCompletionItemKind::SymbolKind(symbol_kind) => {
+                            Some(format!("{:?}", symbol_kind))
+                        }
+                        RaCompletionItemKind::Binding => Some("Binding".to_string()),
+                        RaCompletionItemKind::BuiltinType => Some("BuiltinType".to_string()),
+                        RaCompletionItemKind::InferredType => Some("InferredType".to_string()),
+                        RaCompletionItemKind::Keyword => Some("Keyword".to_string()),
+                        RaCompletionItemKind::Snippet => Some("Snippet".to_string()),
+                        RaCompletionItemKind::UnresolvedReference => {
+                            Some("UnresolvedReference".to_string())
+                        }
+                        RaCompletionItemKind::Expression => Some("Expression".to_string()),
+                    };
+
+                    let documentation = ra_completion
+                        .documentation
+                        .map(|doc| doc.as_str().to_string());
+
+                    // TODO Consider label left/right details
+                    let name = ra_completion.label.primary.into();
+                    let required_import = if ra_completion.import_to_add.is_empty() {
+                        None
+                    } else {
+                        Some(ra_completion.import_to_add.join(", "))
+                    };
+
+                    let completion = CompletionItem {
+                        name,
+                        required_import,
+                        kind,
+                        signature: ra_completion.detail,
+                        documentation,
+                        deprecated: ra_completion.deprecated,
+                    };
+
+                    completions.push(completion);
+                }
+
+                debug!(
+                    "Found {} completions for {}:{}:{}",
+                    completions.len(),
+                    file_path,
+                    line,
+                    column
+                );
+
+                Ok(Some(completions))
+            }
+            Ok(None) => {
+                debug!(
+                    "No completions available for {}:{}:{}",
+                    file_path, line, column
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                warn!("Completion analysis failed: {:?}", e);
+                bail!("Completion analysis failed: {:?}", e)
+            }
+        }
     }
 
     /// Get definition information at the specified cursor position
@@ -955,5 +1115,18 @@ impl std::fmt::Display for TextEdit {
             "{}:{}-{}:{} → '{}'",
             self.line, self.column, self.end_line, self.end_column, self.new_text
         )
+    }
+}
+
+impl std::fmt::Display for CompletionItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(ref kind) = self.kind {
+            write!(f, " ({kind})")?;
+        }
+        if let Some(ref sig) = self.signature {
+            write!(f, " - {sig}")?;
+        }
+        Ok(())
     }
 }
