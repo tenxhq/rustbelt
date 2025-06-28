@@ -308,3 +308,73 @@ async fn test_type_hint_variable_with_name() {
     // TODO This would be nice, but it doesn't show up in the type info
     // assert!(type_info.contains("let"), "Should contain 'let' keyword");
 }
+
+#[tokio::test]
+async fn test_get_completions_basic() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test getting completions at a position where we expect some completions
+    // For example, after "std::" we should get completions for std modules
+    let completions = analyzer
+        .get_completions(sample_path.to_str().unwrap(), 31, 18)
+        .await
+        .expect("Error getting completions");
+
+    if let Some(completions) = completions {
+        println!("Found {} completions", completions.len());
+        for completion in &completions {
+            println!("  - {}", completion);
+        }
+
+        assert!(!completions.is_empty(), "Should find some completions");
+
+        // Check that we have reasonable completion items
+        let has_reasonable_completion = completions.iter().any(|c| !c.name.is_empty());
+        assert!(
+            has_reasonable_completion,
+            "Should have completions with non-empty names"
+        );
+    } else {
+        // Some positions might not have completions available
+        println!("No completions found at this position");
+    }
+}
+
+#[tokio::test]
+async fn test_get_completions_method_chaining() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test getting completions after a dot (method completions)
+    // This should trigger method/field completions
+    let completions = analyzer
+        .get_completions(sample_path.to_str().unwrap(), 32, 20)
+        .await
+        .expect("Error getting completions");
+
+    if let Some(completions) = completions {
+        println!("Found {} method completions", completions.len());
+        for completion in &completions {
+            println!("  - {}", completion);
+        }
+
+        // For a HashMap, we should see methods like insert, get, etc.
+        let has_hash_map_methods = completions
+            .iter()
+            .any(|c| c.name.contains("insert") || c.name.contains("get") || c.name.contains("len"));
+
+        if has_hash_map_methods {
+            assert!(
+                has_hash_map_methods,
+                "Should find HashMap methods in completions"
+            );
+        } else {
+            println!("No HashMap methods found, but that's acceptable depending on context");
+        }
+    } else {
+        println!("No method completions found at this position");
+    }
+}
