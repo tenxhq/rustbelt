@@ -78,3 +78,7 @@ where
 {
     items.into_iter().map(processor).collect()
 }
+
+fn sum_numbers(a: i32, b: i32) -> i32 {
+    a.
+}
