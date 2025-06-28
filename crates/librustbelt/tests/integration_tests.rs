@@ -37,7 +37,7 @@ async fn test_type_hint_simple_variable() {
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
 
-    println!("Type info for 'people': {}", type_info);
+    println!("Type info for 'people': {type_info}");
     assert!(
         type_info.canonical_type.contains("HashMap")
             || type_info.canonical_type.contains("std::collections")
@@ -58,7 +58,7 @@ async fn test_type_hint_function_call() {
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
 
-    println!("Type info for function result: {}", type_info);
+    println!("Type info for function result: {type_info}");
     assert!(
         type_info
             .canonical_type
@@ -79,7 +79,7 @@ async fn test_type_hint_complex_generic() {
         .expect("Error getting type hint");
 
     if let Some(type_info) = result {
-        println!("Type info for complex generic: {}", type_info);
+        println!("Type info for complex generic: {type_info}");
         assert!(
             type_info.canonical_type.contains("Vec")
                 && (type_info.canonical_type.contains("Option")
@@ -133,7 +133,7 @@ async fn test_get_external_definition_function() {
 
     assert_eq!(definitions.len(), 1, "Should find function call definition");
     let definition = &definitions[0];
-    println!("Definition {:?}", definition);
+    println!("Definition {definition:?}");
 
     // Check that we found the function definition
     assert_eq!(
@@ -270,11 +270,10 @@ async fn test_analyzer_workspace_loading() {
         Err(e) => {
             // If there's an error, it should be about the specific position, not workspace
             // loading
-            let error_msg = format!("{}", e);
+            let error_msg = format!("{e}");
             assert!(
                 !error_msg.contains("Cargo.toml") && !error_msg.contains("workspace"),
-                "Workspace loading failed: {}",
-                e
+                "Workspace loading failed: {e}"
             );
         }
     }
@@ -294,7 +293,7 @@ async fn test_type_hint_variable_with_name() {
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
 
-    println!("Type info: {}", type_info);
+    println!("Type info: {type_info}");
 
     // Should contain both the variable name and type
     assert!(

@@ -26,7 +26,7 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
         .parent() // workspace root
         .unwrap();
 
-    println!("{:?}", workspace_root);
+    println!("{workspace_root:?}");
     // First ensure the binary is built
     let output = Command::new("cargo")
         .current_dir(workspace_root)
@@ -49,7 +49,7 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
         "release"
     };
     let binary_path = target_dir.join(profile).join("rustbelt");
-    println!("{:?}", binary_path);
+    println!("{binary_path:?}");
 
     // Create client and connect to process
     let mut client = Client::new().with_request_timeout(Duration::from_secs(30));
