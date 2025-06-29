@@ -4,18 +4,13 @@
 //! Protocol (MCP). It exposes IDE capabilities like type hints,
 //! go-to-definition, and more as MCP tools.
 
-mod ruskel;
-
-use std::sync::Arc;
-
-use async_trait::async_trait;
+use libruskel::Ruskel;
 use librustbelt::RustAnalyzerish;
 use serde::{Deserialize, Serialize};
-use tenx_mcp::{Result, connection::Connection, error::Error, schema::*, schemars};
+use std::sync::Arc;
+use tenx_mcp::{Result, ServerCtx, mcp_server, schema::*, schemars, tool};
 use tokio::sync::Mutex;
 use tracing::info;
-
-const NAME: &str = "rustbelt";
 
 pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -91,253 +86,209 @@ pub struct RuskelParams {
     pub private: bool,
 }
 
-/// Rust-Analyzer MCP mcp connection
-#[derive(Debug, Clone)]
-pub struct RustAnalyzerConnection {
+/// Rust-Analyzer MCP server connection
+#[derive(Debug, Clone, Default)]
+pub struct Rustbelt {
     analyzer: Arc<Mutex<RustAnalyzerish>>,
 }
 
-impl Default for RustAnalyzerConnection {
-    fn default() -> Self {
+impl Rustbelt {
+    fn new() -> Self {
         Self {
             analyzer: Arc::new(Mutex::new(RustAnalyzerish::new())),
         }
     }
 }
 
-#[async_trait]
-impl Connection for RustAnalyzerConnection {
-    async fn initialize(
-        &mut self,
-        _protocol_version: String,
-        _capabilities: ClientCapabilities,
-        _client_info: Implementation,
-    ) -> Result<InitializeResult> {
-        Ok(InitializeResult::new(NAME, VERSION)
-            .with_capabilities(ServerCapabilities::default().with_tools(None)))
+#[mcp_server]
+impl Rustbelt {
+    /// Generate a Rust code skeleton for a crate, showing its public API structure
+    /// returns a single Rust source file that lists the
+    /// *public API (or optionally private items) of any crate or module path, with all
+    /// bodies stripped*. Useful for large‑language models that need to look up item
+    /// names, signatures, derives, feature‑gated cfgs, and doc‑comments while writing
+    /// or reviewing Rust code.
+    ///
+    /// ### When a model should call this tool
+    /// 1. It needs a function/trait/struct signature it can't recall.
+    /// 2. The user asks for examples or docs from a crate.
+    /// 3. The model wants to verify what features gate a symbol.
+    ///
+    /// ### Target syntax examples
+    /// - `serde`               →  latest serde on crates.io
+    /// - `serde@1.0.160`      →  specific published version
+    /// - `serde::de::Deserialize` →  narrow output to one module/type for small contexts
+    /// - `/path/to/crate` or `/path/to/crate::submod` →  local workspace paths
+    ///
+    /// ### Output format
+    /// Plain UTF‑8 text containing valid Rust code, with implementation omitted.
+    ///
+    /// ### Tips for LLMs
+    /// - Request deep module paths (e.g. `tokio::sync::mpsc`) to keep the reply below
+    ///   your token budget.
+    /// - Pass `all_features=true` or `features=[…]` when a symbol is behind a feature gate.
+    #[tool]
+    async fn ruskel(&self, _ctx: &ServerCtx, params: RuskelParams) -> Result<CallToolResult> {
+        let ruskel = Ruskel::new();
+
+        match ruskel.render(
+            &params.target,
+            params.no_default_features,
+            params.all_features,
+            params.features.to_vec(),
+            params.private,
+        ) {
+            Ok(skeleton) => Ok(CallToolResult::new()
+                .with_text_content(skeleton)
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error generating skeleton: {e}"))
+                .is_error(true)),
+        }
     }
 
-    async fn tools_list(&mut self) -> Result<ListToolsResult> {
-        Ok(ListToolsResult::default()
-            .with_tool(
-                Tool::new(
-                    "ruskel",
-                    ToolInputSchema::from_json_schema::<RuskelParams>(),
-                )
-                .with_description(
-                    "Generate a Rust code skeleton for a crate, showing its public API structure",
-                ),
-            )
-            .with_tool(
-                Tool::new(
-                    "get_type_hint",
-                    ToolInputSchema::from_json_schema::<TypeHintParams>(),
-                )
-                .with_description("Get type information for a symbol at the given cursor position"),
-            )
-            .with_tool(
-                Tool::new(
-                    "get_definition",
-                    ToolInputSchema::from_json_schema::<GetDefinitionParams>(),
-                )
-                .with_description(
-                    "Get definition location for a symbol at the given cursor position",
-                ),
-            )
-            .with_tool(
-                Tool::new(
-                    "get_completions",
-                    ToolInputSchema::from_json_schema::<GetCompletionsParams>(),
-                )
-                .with_description("Get completion suggestions at the given cursor position"),
-            )
-            .with_tool(
-                Tool::new(
-                    "rename_symbol",
-                    ToolInputSchema::from_json_schema::<RenameParams>(),
-                )
-                .with_description("Rename a symbol across the workspace"),
-            ))
-    }
-
-    async fn tools_call(
-        &mut self,
-        name: String,
-        arguments: Option<serde_json::Value>,
+    #[tool]
+    /// Get type information for a symbol at the given cursor position
+    async fn get_type_hint(
+        &self,
+        _ctx: &ServerCtx,
+        params: TypeHintParams,
     ) -> Result<CallToolResult> {
-        match name.as_str() {
-            "get_type_hint" => {
-                let params = match arguments {
-                    Some(args) => serde_json::from_value::<TypeHintParams>(args)?,
-                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
-                };
+        match self
+            .analyzer
+            .lock()
+            .await
+            .get_type_hint(&params.file_path, params.line, params.column)
+            .await
+        {
+            Ok(Some(type_info)) => Ok(CallToolResult::new()
+                .with_text_content(type_info.to_string())
+                .is_error(false)),
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("No type information available at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error getting type hint: {e}"))
+                .is_error(true)),
+        }
+    }
 
-                match self
-                    .analyzer
-                    .lock()
-                    .await
-                    .get_type_hint(&params.file_path, params.line, params.column)
-                    .await
-                {
-                    Ok(Some(type_info)) => Ok(CallToolResult::new()
-                        .with_text_content(type_info.to_string())
-                        .is_error(false)),
-                    Ok(None) => Ok(CallToolResult::new()
-                        .with_text_content("No type information available at this position")
-                        .is_error(false)),
-                    Err(e) => Ok(CallToolResult::new()
-                        .with_text_content(format!("Error getting type hint: {e}"))
-                        .is_error(true)),
-                }
+    #[tool]
+    /// Get definition location for a symbol at the given cursor position
+    async fn get_definition(
+        &self,
+        _ctx: &ServerCtx,
+        params: GetDefinitionParams,
+    ) -> Result<CallToolResult> {
+        match self
+            .analyzer
+            .lock()
+            .await
+            .get_definition(&params.file_path, params.line, params.column)
+            .await
+        {
+            Ok(Some(definitions)) => {
+                let result_text = definitions
+                    .iter()
+                    .map(|def| def.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
             }
-            "get_definition" => {
-                let params = match arguments {
-                    Some(args) => serde_json::from_value::<GetDefinitionParams>(args)?,
-                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
-                };
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("No definitions found at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error getting definitions: {e}"))
+                .is_error(true)),
+        }
+    }
 
-                match self
-                    .analyzer
-                    .lock()
-                    .await
-                    .get_definition(&params.file_path, params.line, params.column)
-                    .await
-                {
-                    Ok(Some(definitions)) => {
-                        let result_text = definitions
-                            .iter()
-                            .map(|def| def.to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n");
+    #[tool]
+    /// Get completion suggestions at the given cursor position
+    async fn get_completions(
+        &self,
+        _ctx: &ServerCtx,
+        params: GetCompletionsParams,
+    ) -> Result<CallToolResult> {
+        match self
+            .analyzer
+            .lock()
+            .await
+            .get_completions(&params.file_path, params.line, params.column)
+            .await
+        {
+            Ok(Some(completions)) => {
+                let result_text = completions
+                    .iter()
+                    .map(|comp| comp.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-                        Ok(CallToolResult::new()
-                            .with_text_content(result_text)
-                            .is_error(false))
-                    }
-                    Ok(None) => Ok(CallToolResult::new()
-                        .with_text_content("No definitions found at this position")
-                        .is_error(false)),
-                    Err(e) => Ok(CallToolResult::new()
-                        .with_text_content(format!("Error getting definitions: {e}"))
-                        .is_error(true)),
-                }
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
             }
-            "get_completions" => {
-                let params = match arguments {
-                    Some(args) => serde_json::from_value::<GetCompletionsParams>(args)?,
-                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
-                };
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("No completions found at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error getting completions: {e}"))
+                .is_error(true)),
+        }
+    }
 
-                match self
-                    .analyzer
-                    .lock()
-                    .await
-                    .get_completions(&params.file_path, params.line, params.column)
-                    .await
-                {
-                    Ok(Some(completions)) => {
-                        let result_text = completions
-                            .iter()
-                            .map(|comp| comp.to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n");
+    #[tool]
+    /// Rename a symbol across the workspace
+    async fn rename_symbol(
+        &self,
+        _ctx: &ServerCtx,
+        params: RenameParams,
+    ) -> Result<CallToolResult> {
+        match self
+            .analyzer
+            .lock()
+            .await
+            .rename_symbol(
+                &params.file_path,
+                params.line,
+                params.column,
+                &params.new_name,
+            )
+            .await
+        {
+            Ok(Some(rename_result)) => {
+                let result_text = rename_result.to_string();
 
-                        Ok(CallToolResult::new()
-                            .with_text_content(result_text)
-                            .is_error(false))
-                    }
-                    Ok(None) => Ok(CallToolResult::new()
-                        .with_text_content("No completions found at this position")
-                        .is_error(false)),
-                    Err(e) => Ok(CallToolResult::new()
-                        .with_text_content(format!("Error getting completions: {e}"))
-                        .is_error(true)),
-                }
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
             }
-            "ruskel" => {
-                let params = match arguments {
-                    Some(args) => match serde_json::from_value::<RuskelParams>(args) {
-                        Ok(params) => params,
-                        Err(e) => {
-                            return Ok(CallToolResult::new()
-                                .with_text_content(format!("Invalid arguments: {e}"))
-                                .is_error(true));
-                        }
-                    },
-                    None => {
-                        return Ok(CallToolResult::new()
-                            .with_text_content("No arguments provided")
-                            .is_error(true));
-                    }
-                };
-
-                match ruskel::generate_skeleton(
-                    &params.target,
-                    &params.features,
-                    params.all_features,
-                    params.no_default_features,
-                    params.private,
-                )
-                .await
-                {
-                    Ok(skeleton) => Ok(CallToolResult::new()
-                        .with_text_content(skeleton)
-                        .is_error(false)),
-                    Err(e) => Ok(CallToolResult::new()
-                        .with_text_content(format!("Error generating skeleton: {e}"))
-                        .is_error(true)),
-                }
-            }
-            "rename_symbol" => {
-                let params = match arguments {
-                    Some(args) => serde_json::from_value::<RenameParams>(args)?,
-                    None => return Err(Error::InvalidParams("No arguments provided".to_string())),
-                };
-
-                match self
-                    .analyzer
-                    .lock()
-                    .await
-                    .rename_symbol(
-                        &params.file_path,
-                        params.line,
-                        params.column,
-                        &params.new_name,
-                    )
-                    .await
-                {
-                    Ok(Some(rename_result)) => {
-                        let result_text = rename_result.to_string();
-
-                        Ok(CallToolResult::new()
-                            .with_text_content(result_text)
-                            .is_error(false))
-                    }
-                    Ok(None) => Ok(CallToolResult::new()
-                        .with_text_content("Symbol cannot be renamed at this position")
-                        .is_error(false)),
-                    Err(e) => Ok(CallToolResult::new()
-                        .with_text_content(format!("Error performing rename: {e}"))
-                        .is_error(true)),
-                }
-            }
-            _ => Err(Error::ToolNotFound(name)),
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("Symbol cannot be renamed at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error performing rename: {e}"))
+                .is_error(true)),
         }
     }
 }
 
 pub async fn serve_stdio() -> Result<()> {
     tenx_mcp::Server::default()
-        .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
+        .with_connection(Rustbelt::new)
         .serve_stdio()
         .await
 }
 
 pub async fn serve_tcp(addr: String) -> Result<()> {
-    info!("Starting Rust-Analyzer MCP mcp on {}", addr);
+    info!("Starting Rustbelt MCP server on {}", addr);
 
     tenx_mcp::Server::default()
-        .with_connection_factory(|| Box::new(RustAnalyzerConnection::default()))
+        .with_connection(Rustbelt::new)
         .serve_tcp(addr)
         .await
 }

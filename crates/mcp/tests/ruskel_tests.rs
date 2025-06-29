@@ -1,14 +1,13 @@
-//! Integration tests for the MCP mcp
+//! Integration tests for the MCP server
 //!
-//! These tests verify the MCP mcp protocol implementation using the tenx-mcp
+//! These tests verify the MCP server protocol implementation using the tenx-mcp
 //! client.
 
 use std::{process::Command, time::Duration};
 
 use serde_json::json;
 use tenx_mcp::{
-    client::Client,
-    error::Result,
+    Client, Result, ServerAPI,
     schema::{ClientCapabilities, Implementation, InitializeResult},
 };
 use tokio::{
@@ -16,8 +15,8 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// Helper to create a test MCP client connected to the rustbelt mcp process
-async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
+/// Helper to create a test MCP client connected to the rustbelt server process
+async fn create_test_client() -> Result<(Client<()>, tokio::process::Child)> {
     // Get the workspace root - this is the current project directory
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let workspace_root = std::path::Path::new(manifest_dir)
@@ -52,7 +51,7 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
     println!("{binary_path:?}");
 
     // Create client and connect to process
-    let mut client = Client::new().with_request_timeout(Duration::from_secs(30));
+    let mut client = Client::new("test-client".to_string(), "1.0.0".to_string());
 
     let mut cmd = TokioCommand::new(binary_path);
     cmd.arg("serve");
@@ -63,15 +62,18 @@ async fn create_test_client() -> Result<(Client, tokio::process::Child)> {
 }
 
 /// Initialize the client connection
-async fn initialize_client(client: &mut Client) -> Result<InitializeResult> {
+async fn initialize_client(client: &mut Client<()>) -> Result<InitializeResult> {
     let client_info = Implementation {
         name: "test-client".to_string(),
         version: "1.0.0".to_string(),
+        title: None,
     };
 
     let capabilities = ClientCapabilities::default();
 
-    client.initialize(client_info, capabilities).await
+    client
+        .initialize("2025-06-18".to_string(), capabilities, client_info)
+        .await
 }
 
 #[tokio::test]
@@ -86,7 +88,7 @@ async fn test_mcp_server_initialize() {
         .expect("Failed to initialize");
 
     // Verify response structure
-    assert_eq!(result.protocol_version, "2025-03-26");
+    assert_eq!(result.protocol_version, "2025-06-18");
     assert_eq!(result.server_info.name, "rustbelt");
 
     // Clean up
@@ -103,7 +105,7 @@ async fn test_mcp_server_list_tools() {
         .await
         .expect("Failed to initialize");
 
-    let result = timeout(Duration::from_secs(10), client.list_tools())
+    let result = timeout(Duration::from_secs(10), client.list_tools(None))
         .await
         .expect("Timeout listing tools")
         .expect("Failed to list tools");
@@ -139,7 +141,7 @@ async fn test_mcp_server_call_tool() {
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("ruskel", &arguments),
+        client.call_tool("ruskel", arguments),
     )
     .await
     .expect("Timeout during tool call")
@@ -163,9 +165,7 @@ async fn test_mcp_server_invalid_tool() {
         .expect("Failed to initialize");
 
     // Call non-existent tool
-    let result = client
-        .call_tool("non_existent_tool", &Some(json!({})))
-        .await;
+    let result = client.call_tool("non_existent_tool", Some(json!({}))).await;
 
     // Should get an error
     assert!(result.is_err());
@@ -190,12 +190,10 @@ async fn test_mcp_server_invalid_arguments() {
         // Missing required "target" field
     }));
 
-    let result = client.call_tool("ruskel", &arguments).await;
+    let result = client.call_tool("ruskel", arguments).await;
 
-    // Should get an error in the response content
-    assert!(result.is_ok());
-    let call_result = result.unwrap();
-    assert!(call_result.is_error.unwrap_or(false));
+    // Should get an error due to invalid parameters
+    assert!(result.is_err());
 
     // Clean up
     let _ = child.kill().await;
@@ -216,7 +214,7 @@ async fn test_mcp_server_multiple_requests() {
 
     for target in &test_targets {
         // List tools request
-        let _list_result = timeout(Duration::from_secs(10), client.list_tools())
+        let _list_result = timeout(Duration::from_secs(10), client.list_tools(None))
             .await
             .expect("Timeout listing tools")
             .expect("Failed to list tools");
@@ -229,7 +227,7 @@ async fn test_mcp_server_multiple_requests() {
 
         let result = timeout(
             Duration::from_secs(30),
-            client.call_tool("ruskel", &arguments),
+            client.call_tool("ruskel", arguments),
         )
         .await
         .unwrap_or_else(|_| panic!("Timeout for target {target}"));
@@ -257,20 +255,18 @@ async fn test_mcp_server_error_recovery() {
         .expect("Failed to initialize");
 
     // 1. Valid request
-    let result = timeout(Duration::from_secs(10), client.list_tools())
+    let result = timeout(Duration::from_secs(10), client.list_tools(None))
         .await
         .expect("Timeout listing tools")
         .expect("Failed to list tools");
     assert!(!result.tools.is_empty());
 
     // 2. Invalid tool name (should error)
-    let result = client
-        .call_tool("non_existent_tool", &Some(json!({})))
-        .await;
+    let result = client.call_tool("non_existent_tool", Some(json!({}))).await;
     assert!(result.is_err());
 
-    // 3. Valid request after error (mcp should recover)
-    let result = timeout(Duration::from_secs(10), client.list_tools())
+    // 3. Valid request after error (server should recover)
+    let result = timeout(Duration::from_secs(10), client.list_tools(None))
         .await
         .expect("Timeout listing tools after error")
         .expect("Failed to list tools after error");
@@ -282,10 +278,9 @@ async fn test_mcp_server_error_recovery() {
         "private": true
     }));
 
-    let result = client.call_tool("ruskel", &invalid_args).await;
-    assert!(result.is_ok());
-    let call_result = result.unwrap();
-    assert!(call_result.is_error.unwrap_or(false));
+    let result = client.call_tool("ruskel", invalid_args).await;
+    // Should get an error due to invalid parameters
+    assert!(result.is_err());
 
     // 5. Valid request after another error
     let final_args = Some(json!({
@@ -295,7 +290,7 @@ async fn test_mcp_server_error_recovery() {
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("ruskel", &final_args),
+        client.call_tool("ruskel", final_args),
     )
     .await
     .expect("Timeout during final request");
@@ -336,7 +331,7 @@ async fn test_mcp_get_completions_tool() {
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("get_completions", &arguments),
+        client.call_tool("get_completions", arguments),
     )
     .await
     .expect("Timeout during get_completions call")

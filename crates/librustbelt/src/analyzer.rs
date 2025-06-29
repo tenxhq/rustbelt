@@ -1077,8 +1077,8 @@ impl std::fmt::Display for DefinitionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}:{}:{} - {} ({:?})",
-            self.file_path, self.line, self.column, self.name, self.kind
+            "{}:{}:{}\n{}",
+            self.file_path, self.line, self.column, self.content
         )
     }
 }
