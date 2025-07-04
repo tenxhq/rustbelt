@@ -59,6 +59,11 @@ enum Commands {
         /// Column number (1-based)
         column: u32,
     },
+    /// View a Rust file with embedded inlay hints such as types and named arguments
+    ViewInlayHints {
+        /// Path to the Rust source file
+        file_path: String,
+    },
     /// Repl to a workspace for interactive queries
     Repl {
         /// Path to the workspace directory
@@ -188,6 +193,23 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Error getting completions: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::ViewInlayHints { file_path } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            // Initialize a standalone analyzer for CLI usage
+            let mut analyzer = RustAnalyzerish::new();
+
+            match analyzer.view_inlay_hints(&file_path).await {
+                Ok(annotated_content) => {
+                    println!("{}", annotated_content);
+                }
+                Err(e) => {
+                    eprintln!("Error viewing inlay hints: {e}");
                     std::process::exit(1);
                 }
             }

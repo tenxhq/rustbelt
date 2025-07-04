@@ -54,6 +54,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("  type <file> <line> <col> - Get type hint at position");
     println!("  def <file> <line> <col>  - Get definition at position");
     println!("  comp <file> <line> <col> - Get completions at position");
+    println!("  hints <file>  - View file with inlay hints");
     println!("  rename <file> <line> <col> <new_name> - Rename symbol");
     println!("  quit/exit     - Exit the REPL");
     println!("  Note: File paths can be relative to the workspace or absolute");
@@ -88,6 +89,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                         println!("  type <file> <line> <col> - Get type hint at position");
                         println!("  def <file> <line> <col>  - Get definition at position");
                         println!("  comp <file> <line> <col> - Get completions at position");
+                        println!("  hints <file>  - View file with inlay hints");
                         println!("  rename <file> <line> <col> <new_name> - Rename symbol");
                         println!("  quit/exit     - Exit the REPL");
                     }
@@ -229,6 +231,26 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             }
                             Err(e) => {
                                 println!("Error getting completions: {}", e);
+                            }
+                        }
+                    }
+                    "types" => {
+                        if parts.len() != 2 {
+                            println!("Usage: types <file>");
+                            continue;
+                        }
+
+                        let file_path = resolve_path(workspace_path, parts[1]);
+
+                        match analyzer.view_inlay_hints(&file_path).await {
+                            Ok(annotated_content) => {
+                                println!("File with inlay hints:");
+                                println!("=====================================");
+                                println!("{}", annotated_content);
+                                println!("=====================================");
+                            }
+                            Err(e) => {
+                                println!("Error viewing inlay hints: {}", e);
                             }
                         }
                     }

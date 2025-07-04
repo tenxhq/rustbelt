@@ -54,6 +54,13 @@ pub struct RuskelParams {
     pub private: bool,
 }
 
+/// Parameters for the view_inlay_hints tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ViewInlayHintsParams {
+    /// Absolute path to the Rust source file
+    pub file_path: String,
+}
+
 /// Rust-Analyzer MCP server connection
 #[derive(Debug, Clone, Default)]
 pub struct Rustbelt {
@@ -222,6 +229,29 @@ impl Rustbelt {
                 .is_error(false)),
             Err(e) => Ok(CallToolResult::new()
                 .with_text_content(format!("Error performing rename: {e}"))
+                .is_error(true)),
+        }
+    }
+
+    #[tool]
+    /// View a Rust file with inlay hints embedded, such as explicit types
+    async fn view_inlay_hints(
+        &self,
+        _ctx: &ServerCtx,
+        params: ViewInlayHintsParams,
+    ) -> Result<CallToolResult> {
+        match self
+            .analyzer
+            .lock()
+            .await
+            .view_inlay_hints(&params.file_path)
+            .await
+        {
+            Ok(annotated_content) => Ok(CallToolResult::new()
+                .with_text_content(annotated_content)
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error viewing inlay hints: {e}"))
                 .is_error(true)),
         }
     }

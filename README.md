@@ -32,12 +32,13 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 ## Available Tools
 
-| Tool Name | Status | Description | Parameters |
-|-----------|--------|-------------|------------|
-| `ruskel` | Ready | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
-| `get_type_hint` | Alpha | Get type information for a symbol at cursor position | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
-| `get_definition` | Alpha | Get definition for symbol at cursor position | `file_path`, `line`, `column` |
-| `rename_symbol` | Alpha | Rename a symbol across the workspace | `file_path`, `line`, `column`, `new_name` |
+| Tool Name          | Status | Description                                                                 | Parameters |
+|--------------------|--------|-----------------------------------------------------------------------------|------------|
+| `ruskel`           | Ready | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
+| `get_type_hint`    | Alpha | Get type information for a symbol at cursor position                        | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
+| `get_definition`   | Alpha | Get definition for symbol at cursor position                                | `file_path`, `line`, `column` |
+| `rename_symbol`    | Alpha | Rename a symbol across the workspace                                        | `file_path`, `line`, `column`, `new_name` |
+| `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as type hints     | `file_path` |
 
 
 ## Planned Improvements

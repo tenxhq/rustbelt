@@ -445,3 +445,45 @@ async fn test_get_completions_method_chaining() {
         println!("No method completions found at this position");
     }
 }
+
+#[tokio::test]
+async fn test_view_inlay_hints() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test getting completions after a dot (method completions)
+    // This should trigger method/field completions
+    let file_with_inlay_hints = analyzer
+        .view_inlay_hints(sample_path.to_str().unwrap())
+        .await
+        .expect("Error viewing inlay hints");
+
+    println!("{file_with_inlay_hints}");
+    // Adding type hints
+    assert!(
+        file_with_inlay_hints.contains("let _sum: i32"),
+        "Should show inlay type hint for _sum"
+    );
+    assert!(
+        file_with_inlay_hints.contains("let person: Person"),
+        "Should show inlay type hint for person"
+    );
+    assert!(
+        file_with_inlay_hints.contains("let numbers: Vec<i32>"),
+        "Should show inlay type hint for numbers"
+    );
+    assert!(
+        file_with_inlay_hints.contains("for item: Option<Result<String, &str>>"),
+        "Should show inlay type hint for numbers"
+    );
+
+    // Adding named arguments
+    // assert!(file_with_inlay_hints.contains("Person::new(name: \"Alice\".to_string()"), "Should show named arguments");
+
+    // Keeping existing types intact
+    assert!(
+        file_with_inlay_hints.contains("let doubled: Vec<i32>"),
+        "Should keep existing types intact"
+    );
+}

@@ -110,13 +110,14 @@ async fn test_mcp_server_list_tools() {
         .expect("Failed to list tools");
 
     // Verify response
-    assert_eq!(result.tools.len(), 5);
+    assert_eq!(result.tools.len(), 6);
     let tool_names: Vec<&str> = result.tools.iter().map(|t| t.name.as_str()).collect();
     assert!(tool_names.contains(&"get_type_hint"));
     assert!(tool_names.contains(&"get_definition"));
     assert!(tool_names.contains(&"get_completions"));
     assert!(tool_names.contains(&"ruskel"));
     assert!(tool_names.contains(&"rename_symbol"));
+    assert!(tool_names.contains(&"view_inlay_hints"));
 
     // Clean up
     let _ = child.kill().await;

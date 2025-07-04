@@ -10,11 +10,16 @@ use super::entities::{
     CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
 };
 use anyhow::{Context, Result, bail};
+use ra_ap_hir::ClosureStyle;
 use ra_ap_ide::{
-    Analysis, AnalysisHost, CallableSnippets, CompletionConfig, CompletionFieldsToResolve,
-    CompletionItemKind as RaCompletionItemKind, FileId, FilePosition, FileRange, HoverConfig,
-    HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize,
+    AdjustmentHints, AdjustmentHintsMode, Analysis, AnalysisHost, CallableSnippets,
+    ClosureReturnTypeHints, CompletionConfig, CompletionFieldsToResolve,
+    CompletionItemKind as RaCompletionItemKind, DiscriminantHints, FileId, FilePosition, FileRange,
+    GenericParameterHints, HoverConfig, HoverDocFormat, InlayFieldsToResolve, InlayHintPosition,
+    InlayHintsConfig, LifetimeElisionHints, LineCol, LineIndex, MonikerResult, SubstTyLen,
+    TextRange, TextSize,
 };
+use ra_ap_ide_db::text_edit::TextEditBuilder;
 use ra_ap_ide_db::{
     ChangeWithProcMacros,
     imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind},
@@ -23,6 +28,7 @@ use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at
 use ra_ap_profile::StopWatch;
 use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
+use tokio::fs;
 use tracing::{debug, error, info, trace, warn};
 
 /// Main interface to rust-analyzer functionality
@@ -62,7 +68,7 @@ impl RustAnalyzerish {
         cursor: &CursorCoordinates,
         file_id: FileId,
         offset: TextSize,
-        analysis: &ra_ap_ide::Analysis,
+        analysis: &Analysis,
     ) {
         debug!(
             "Cursor position: file={:?}, line={}, column={}, offset={:?}",
@@ -114,8 +120,8 @@ impl RustAnalyzerish {
     fn validate_and_convert_cursor(
         &self,
         cursor: &CursorCoordinates,
-        line_index: &ra_ap_ide::LineIndex,
-    ) -> Result<ra_ap_ide::TextSize> {
+        line_index: &LineIndex,
+    ) -> Result<TextSize> {
         // Validate coordinates before proceeding
         if cursor.line == 0 || cursor.column == 0 {
             return Err(anyhow::anyhow!(
@@ -454,7 +460,7 @@ impl RustAnalyzerish {
                             }) {
                             // Extract module path from moniker
                             match &moniker_info.info.first() {
-                                Some(ra_ap_ide::MonikerResult::Moniker(moniker)) => {
+                                Some(MonikerResult::Moniker(moniker)) => {
                                     // Build full module path from crate name and description
                                     let crate_name = &moniker.identifier.crate_name;
                                     let module_parts: Vec<String> = moniker
@@ -470,7 +476,7 @@ impl RustAnalyzerish {
                                         format!("{}::{}", crate_name, module_parts.join("::"))
                                     }
                                 }
-                                Some(ra_ap_ide::MonikerResult::Local { .. }) => {
+                                Some(MonikerResult::Local { .. }) => {
                                     // For local symbols, fall back to container name
                                     nav.container_name
                                         .as_ref()
@@ -682,6 +688,99 @@ impl RustAnalyzerish {
         Ok(Some(RenameResult { file_changes }))
     }
 
+    /// View a Rust file with inlay hints
+    pub async fn view_inlay_hints(&mut self, file_path: &str) -> Result<String> {
+        let path = PathBuf::from(file_path);
+
+        // Ensure the project/workspace is loaded
+        let analysis = self.ensure_project_loaded(&path).await?;
+
+        // Load the file if not already loaded
+        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+
+        // Get the file content
+        let file_content = analysis
+            .file_text(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get file content for: {}", file_path))?;
+
+        // Configure inlay hints to show type information
+        let inlay_config = InlayHintsConfig {
+            render_colons: true,
+            type_hints: true,
+            sized_bound: false,
+            discriminant_hints: DiscriminantHints::Never,
+            parameter_hints: false,
+            generic_parameter_hints: GenericParameterHints {
+                type_hints: false,
+                lifetime_hints: false,
+                const_hints: false,
+            },
+            chaining_hints: false,
+            adjustment_hints: AdjustmentHints::Never,
+            adjustment_hints_mode: AdjustmentHintsMode::Prefix,
+            adjustment_hints_hide_outside_unsafe: false,
+            closure_return_type_hints: ClosureReturnTypeHints::Never,
+            closure_capture_hints: false,
+            binding_mode_hints: false,
+            implicit_drop_hints: false,
+            lifetime_elision_hints: LifetimeElisionHints::Never,
+            param_names_for_lifetime_elision_hints: false,
+            hide_named_constructor_hints: false,
+            hide_closure_initialization_hints: false,
+            hide_closure_parameter_hints: false,
+            range_exclusive_hints: false,
+            closure_style: ClosureStyle::ImplFn,
+            max_length: None,
+            closing_brace_hints_min_lines: None,
+            fields_to_resolve: InlayFieldsToResolve::empty(),
+        };
+
+        // Get inlay hints for the entire file
+        let inlay_hints = analysis
+            .inlay_hints(&inlay_config, file_id, None)
+            .map_err(|_| anyhow::anyhow!("Failed to get inlay hints for file: {}", file_path))?;
+
+        debug!(
+            "Found {} inlay hints for file: {}",
+            inlay_hints.len(),
+            file_path
+        );
+
+        // Use TextEditBuilder to apply all inlay hints as insertions
+        let mut builder = TextEditBuilder::default();
+
+        for hint in inlay_hints {
+            // Use hint.position to determine where to insert the annotation
+            let offset = match hint.position {
+                InlayHintPosition::Before => hint.range.start(),
+                InlayHintPosition::After => hint.range.end(),
+            };
+
+            debug!("Inlay hint at offset {:?}: {:?}", offset, hint.label);
+
+            // Create the type annotation text
+            let hint_text = hint
+                .label
+                .parts
+                .iter()
+                .map(|part| part.text.as_str())
+                .collect::<Vec<_>>()
+                .join("");
+
+            // Insert the annotation at the correct position
+            builder.insert(offset, hint_text);
+        }
+
+        // Apply all edits to the file content
+        let text_edit = builder.finish();
+        let mut result = file_content.to_string();
+        text_edit.apply(&mut result);
+
+        debug!("Generated annotated file with {} characters", result.len());
+
+        Ok(result)
+    }
+
     /// Ensure the project workspace is loaded for the given file path
     async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<Analysis> {
         let project_root = self.find_project_root(file_path)?;
@@ -867,10 +966,6 @@ impl RustAnalyzerish {
     /// Apply rename edits to files on disk using rust-analyzer's
     /// TextEditBuilder
     pub async fn apply_rename_edits(rename_result: &RenameResult) -> anyhow::Result<()> {
-        use ra_ap_ide::{TextRange, TextSize};
-        use ra_ap_ide_db::text_edit::TextEditBuilder;
-        use tokio::fs;
-
         for file_change in &rename_result.file_changes {
             // Read the current file content
             let mut content = fs::read_to_string(&file_change.file_path)
