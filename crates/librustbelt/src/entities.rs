@@ -1,4 +1,27 @@
+use ra_ap_ide::LineCol;
 use ra_ap_ide_db::SymbolKind;
+use serde::{Deserialize, Serialize};
+
+/// Cursor coordinates for specifying position in a file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct CursorCoordinates {
+    /// Absolute path to the Rust source file
+    pub file_path: String,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
+}
+
+impl From<&CursorCoordinates> for LineCol {
+    fn from(cursor: &CursorCoordinates) -> Self {
+        LineCol {
+            line: cursor.line.saturating_sub(1),
+            col: cursor.column.saturating_sub(1),
+        }
+    }
+}
 
 /// Information about a definition location
 #[derive(Debug, Clone)]

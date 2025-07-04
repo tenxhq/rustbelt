@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::entities::{
-    CompletionItem, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
+    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
 };
 use anyhow::{Context, Result, bail};
 use ra_ap_ide::{
@@ -52,13 +52,8 @@ impl RustAnalyzerish {
     }
 
     /// Get type hint information at the specified cursor position
-    pub async fn get_type_hint(
-        &mut self,
-        file_path: &str,
-        line: u32,
-        column: u32,
-    ) -> Result<Option<TypeHint>> {
-        let path = PathBuf::from(file_path);
+    pub async fn get_type_hint(&mut self, cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
+        let path = PathBuf::from(&cursor.file_path);
 
         // Ensure the project/workspace is loaded
         let analysis = self.ensure_project_loaded(&path).await?;
@@ -72,13 +67,14 @@ impl RustAnalyzerish {
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
         // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col = LineCol {
-            line: line.saturating_sub(1),
-            col: column.saturating_sub(1),
-        };
-        let offset = line_index
-            .offset(line_col)
-            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+        let line_col: LineCol = cursor.into();
+        let offset = line_index.offset(line_col).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid line/column position: {}:{}",
+                cursor.line,
+                cursor.column
+            )
+        })?;
 
         // Create TextRange for the hover query
         let text_range = TextRange::new(offset, offset + TextSize::from(1));
@@ -99,7 +95,7 @@ impl RustAnalyzerish {
 
         debug!(
             "Attempting hover query for file {:?} at offset {:?} (line {} col {})",
-            file_id, offset, line, column
+            file_id, offset, cursor.line, cursor.column
         );
 
         // Try hover with the configured settings
@@ -114,7 +110,7 @@ impl RustAnalyzerish {
             Ok(None) => {
                 debug!(
                     "No hover info available for {}:{}:{}",
-                    file_path, line, column
+                    cursor.file_path, cursor.line, cursor.column
                 );
                 return Ok(None);
             }
@@ -154,13 +150,13 @@ impl RustAnalyzerish {
 
         debug!(
             "Got type hint for {}:{}:{}: {}",
-            file_path, line, column, result
+            cursor.file_path, cursor.line, cursor.column, result
         );
 
         let type_hint = TypeHint {
-            file_path: file_path.to_string(),
-            line,
-            column,
+            file_path: cursor.file_path.clone(),
+            line: cursor.line,
+            column: cursor.column,
             symbol: symbol_name.unwrap_or_else(|| "unknown".to_string()),
             short_type: type_info.to_string(),
             canonical_type: type_info.to_string(), // TODO
@@ -172,11 +168,9 @@ impl RustAnalyzerish {
     /// Get completion suggestions at the specified cursor position
     pub async fn get_completions(
         &mut self,
-        file_path: &str,
-        line: u32,
-        column: u32,
+        cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let path = PathBuf::from(file_path);
+        let path = PathBuf::from(&cursor.file_path);
 
         let analysis = self.ensure_project_loaded(&path).await?;
 
@@ -186,17 +180,18 @@ impl RustAnalyzerish {
             .file_line_index(file_id)
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
-        let line_col = LineCol {
-            line: line.saturating_sub(1),
-            col: column.saturating_sub(1),
-        };
-        let offset = line_index
-            .offset(line_col)
-            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+        let line_col: LineCol = cursor.into();
+        let offset = line_index.offset(line_col).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid line/column position: {}:{}",
+                cursor.line,
+                cursor.column
+            )
+        })?;
 
         debug!(
             "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
-            file_id, offset, line, column
+            file_id, offset, cursor.line, cursor.column
         );
 
         let position = FilePosition { file_id, offset };
@@ -279,9 +274,9 @@ impl RustAnalyzerish {
                 debug!(
                     "Found {} completions for {}:{}:{}",
                     completions.len(),
-                    file_path,
-                    line,
-                    column
+                    cursor.file_path,
+                    cursor.line,
+                    cursor.column
                 );
 
                 Ok(Some(completions))
@@ -289,7 +284,7 @@ impl RustAnalyzerish {
             Ok(None) => {
                 debug!(
                     "No completions available for {}:{}:{}",
-                    file_path, line, column
+                    cursor.file_path, cursor.line, cursor.column
                 );
                 Ok(None)
             }
@@ -303,11 +298,9 @@ impl RustAnalyzerish {
     /// Get definition information at the specified cursor position
     pub async fn get_definition(
         &mut self,
-        file_path: &str,
-        line: u32,
-        column: u32,
+        cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<DefinitionInfo>>> {
-        let path = PathBuf::from(file_path);
+        let path = PathBuf::from(&cursor.file_path);
 
         // Ensure the project/workspace is loaded
         let analysis = self.ensure_project_loaded(&path).await?;
@@ -321,17 +314,18 @@ impl RustAnalyzerish {
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
         // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col = LineCol {
-            line: line.saturating_sub(1),
-            col: column.saturating_sub(1),
-        };
-        let offset = line_index
-            .offset(line_col)
-            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+        let line_col: LineCol = cursor.into();
+        let offset = line_index.offset(line_col).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid line/column position: {}:{}",
+                cursor.line,
+                cursor.column
+            )
+        })?;
 
         debug!(
             "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
-            file_id, offset, line, column
+            file_id, offset, cursor.line, cursor.column
         );
 
         // Debug the current character at the offset
@@ -364,7 +358,7 @@ impl RustAnalyzerish {
             Err(_panic) => {
                 debug!(
                     "Caught panic during goto_definition for {}:{}:{}, likely due to edge case in rust-analyzer",
-                    file_path, line, column
+                    cursor.file_path, cursor.line, cursor.column
                 );
                 return Ok(None);
             }
@@ -477,16 +471,16 @@ impl RustAnalyzerish {
                 debug!(
                     "Found {} definitions for {}:{}:{}",
                     definitions.len(),
-                    file_path,
-                    line,
-                    column
+                    cursor.file_path,
+                    cursor.line,
+                    cursor.column
                 );
                 Ok(Some(definitions))
             }
             Ok(None) => {
                 debug!(
                     "No definitions available for {}:{}:{}",
-                    file_path, line, column
+                    cursor.file_path, cursor.line, cursor.column
                 );
                 Ok(None)
             }
@@ -501,15 +495,11 @@ impl RustAnalyzerish {
     /// to disk
     pub async fn rename_symbol(
         &mut self,
-        file_path: &str,
-        line: u32,
-        column: u32,
+        cursor: &CursorCoordinates,
         new_name: &str,
     ) -> Result<Option<RenameResult>> {
         // Get the rename information
-        let rename_result = self
-            .get_rename_info(file_path, line, column, new_name)
-            .await?;
+        let rename_result = self.get_rename_info(cursor, new_name).await?;
 
         if let Some(ref result) = rename_result {
             // Apply the edits to disk
@@ -522,12 +512,10 @@ impl RustAnalyzerish {
     /// Get rename information without applying changes to disk
     pub async fn get_rename_info(
         &mut self,
-        file_path: &str,
-        line: u32,
-        column: u32,
+        cursor: &CursorCoordinates,
         new_name: &str,
     ) -> Result<Option<RenameResult>> {
-        let path = PathBuf::from(file_path);
+        let path = PathBuf::from(&cursor.file_path);
 
         // Ensure the project/workspace is loaded
         let analysis = self.ensure_project_loaded(&path).await?;
@@ -541,17 +529,18 @@ impl RustAnalyzerish {
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
         // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col = LineCol {
-            line: line.saturating_sub(1),
-            col: column.saturating_sub(1),
-        };
-        let offset = line_index
-            .offset(line_col)
-            .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}", line, column))?;
+        let line_col: LineCol = cursor.into();
+        let offset = line_index.offset(line_col).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid line/column position: {}:{}",
+                cursor.line,
+                cursor.column
+            )
+        })?;
 
         debug!(
             "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",
-            file_id, offset, line, column, new_name
+            file_id, offset, cursor.line, cursor.column, new_name
         );
 
         let position = FilePosition { file_id, offset };

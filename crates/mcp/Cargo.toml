@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-librustbelt = { path = "../librustbelt" }
+librustbelt = { path = "../librustbelt", features = ["schemars"] }
 
 # MCP support
 

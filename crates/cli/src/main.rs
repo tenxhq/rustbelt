@@ -4,7 +4,7 @@
 //! functionality and standalone CLI tools.
 
 use clap::{Parser, Subcommand};
-use librustbelt::RustAnalyzerish;
+use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
 use rustbelt_server::VERSION;
 
 #[derive(Parser)]
@@ -91,7 +91,13 @@ async fn main() -> anyhow::Result<()> {
             // Initialize a standalone analyzer for CLI usage
             let mut analyzer = RustAnalyzerish::new();
 
-            match analyzer.get_type_hint(&file_path, line, column).await {
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+            };
+
+            match analyzer.get_type_hint(&cursor).await {
                 Ok(Some(type_info)) => {
                     println!("The type information is:\n{type_info}");
                 }
@@ -116,7 +122,13 @@ async fn main() -> anyhow::Result<()> {
             // Initialize a standalone analyzer for CLI usage
             let mut analyzer = RustAnalyzerish::new();
 
-            match analyzer.get_definition(&file_path, line, column).await {
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+            };
+
+            match analyzer.get_definition(&cursor).await {
                 Ok(Some(definitions)) => {
                     println!("Found {} definition(s):", definitions.len());
                     for def in definitions {
@@ -144,7 +156,13 @@ async fn main() -> anyhow::Result<()> {
             // Initialize a standalone analyzer for CLI usage
             let mut analyzer = RustAnalyzerish::new();
 
-            match analyzer.get_completions(&file_path, line, column).await {
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+            };
+
+            match analyzer.get_completions(&cursor).await {
                 Ok(Some(completions)) => {
                     println!(
                         "Available completions at {}:{}:{} ({} items):",

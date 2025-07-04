@@ -3215,6 +3215,7 @@ dependencies = [
  "ra_ap_syntax",
  "ra_ap_vfs",
  "ra_ap_vfs-notify",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",

@@ -44,3 +44,10 @@ serde_json = { workspace = true }
 
 # Logging for the ruskel tool
 tracing-subscriber = { workspace = true }
+
+# Schema support for MCP
+schemars = { workspace = true, optional = true }
+
+[features]
+default = []
+schemars = ["dep:schemars"]

@@ -5,7 +5,7 @@
 //! go-to-definition, and more as MCP tools.
 
 use libruskel::Ruskel;
-use librustbelt::RustAnalyzerish;
+use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tenx_mcp::{Result, ServerCtx, mcp_server, schema::*, schemars, tool};
@@ -20,17 +20,6 @@ pub const VERSION: &str = concat!(
     env!("VERGEN_BUILD_DATE"),
     ")"
 );
-
-/// Cursor coordinates
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CursorCoordinates {
-    /// Absolute path to the Rust source file
-    pub file_path: String,
-    /// Line number (1-based)
-    pub line: u32,
-    /// Column number (1-based)
-    pub column: u32,
-}
 
 /// Parameters for the rename_symbol tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -126,15 +115,9 @@ impl Rustbelt {
     async fn get_type_hint(
         &self,
         _ctx: &ServerCtx,
-        params: CursorCoordinates,
+        cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self
-            .analyzer
-            .lock()
-            .await
-            .get_type_hint(&params.file_path, params.line, params.column)
-            .await
-        {
+        match self.analyzer.lock().await.get_type_hint(&cursor).await {
             Ok(Some(type_info)) => Ok(CallToolResult::new()
                 .with_text_content(type_info.to_string())
                 .is_error(false)),
@@ -152,15 +135,9 @@ impl Rustbelt {
     async fn get_definition(
         &self,
         _ctx: &ServerCtx,
-        params: CursorCoordinates,
+        cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self
-            .analyzer
-            .lock()
-            .await
-            .get_definition(&params.file_path, params.line, params.column)
-            .await
-        {
+        match self.analyzer.lock().await.get_definition(&cursor).await {
             Ok(Some(definitions)) => {
                 let result_text = definitions
                     .iter()
@@ -186,15 +163,9 @@ impl Rustbelt {
     async fn get_completions(
         &self,
         _ctx: &ServerCtx,
-        params: CursorCoordinates,
+        cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self
-            .analyzer
-            .lock()
-            .await
-            .get_completions(&params.file_path, params.line, params.column)
-            .await
-        {
+        match self.analyzer.lock().await.get_completions(&cursor).await {
             Ok(Some(completions)) => {
                 let result_text = completions
                     .iter()
@@ -226,12 +197,7 @@ impl Rustbelt {
             .analyzer
             .lock()
             .await
-            .rename_symbol(
-                &params.cursor_coordinates.file_path,
-                params.cursor_coordinates.line,
-                params.cursor_coordinates.column,
-                &params.new_name,
-            )
+            .rename_symbol(&params.cursor_coordinates, &params.new_name)
             .await
         {
             Ok(Some(rename_result)) => {

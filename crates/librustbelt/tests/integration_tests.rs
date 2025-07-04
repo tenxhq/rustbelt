@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use librustbelt::analyzer::RustAnalyzerish;
+use librustbelt::{analyzer::RustAnalyzerish, entities::CursorCoordinates};
 use ra_ap_ide::SymbolKind;
 use tokio::sync::Mutex;
 
@@ -31,8 +31,13 @@ async fn test_type_hint_simple_variable() {
     let sample_path = get_sample_file_path();
 
     // Test type hint for 'people' variable on line 31 (HashMap<String, Person>)
+    let cursor = CursorCoordinates {
+        file_path: sample_path.to_str().unwrap().to_string(),
+        line: 31,
+        column: 9,
+    };
     let type_info = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 31, 9)
+        .get_type_hint(&cursor)
         .await
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
@@ -53,7 +58,11 @@ async fn test_type_hint_function_call() {
 
     // Test type hint for function call result on line 35 (f64)
     let type_info = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 35, 14)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 35,
+            column: 14,
+        })
         .await
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
@@ -74,7 +83,11 @@ async fn test_type_hint_complex_generic() {
 
     // Test type hint for complex generic type on line 46
     let result = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 46, 9)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 46,
+            column: 9,
+        })
         .await
         .expect("Error getting type hint");
 
@@ -99,7 +112,11 @@ async fn test_get_definition_struct() {
 
     // Test get definition for Person struct usage on line 33
     let definitions = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 33, 18)
+        .get_definition(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 33,
+            column: 18,
+        })
         .await
         .expect("Error getting definition")
         .expect("Expected to find definition for Person struct");
@@ -126,7 +143,11 @@ async fn test_get_external_definition_function() {
 
     // Test get definition for function call on line 35
     let definitions = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 35, 14)
+        .get_definition(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 35,
+            column: 14,
+        })
         .await
         .expect("Error getting definition")
         .expect("Expected to find definition for function");
@@ -157,7 +178,11 @@ async fn test_get_definition_method() {
 
     // Test get definition for method call on line 33 (.with_email)
     let definitions = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 33, 55)
+        .get_definition(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 33,
+            column: 55,
+        })
         .await
         .expect("Error getting definition")
         .expect("Expected to find definition for method");
@@ -180,7 +205,11 @@ async fn test_error_handling_invalid_position() {
 
     // Test with invalid line/column (way beyond file bounds)
     let result = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 9999, 9999)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 9999,
+            column: 9999,
+        })
         .await;
 
     // Should return an error for invalid position
@@ -193,7 +222,13 @@ async fn test_error_handling_nonexistent_file() {
     let mut analyzer = analyzer.lock().await;
 
     // Test with non-existent file
-    let result = analyzer.get_type_hint("/nonexistent/file.rs", 10, 10).await;
+    let result = analyzer
+        .get_type_hint(&CursorCoordinates {
+            file_path: "/nonexistent/file.rs".to_string(),
+            line: 10,
+            column: 10,
+        })
+        .await;
 
     // Should return an error for non-existent file
     assert!(result.is_err());
@@ -207,7 +242,11 @@ async fn test_no_definition_available() {
 
     // Test get definition on a comment or whitespace (should return None or empty)
     let result = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 1, 1)
+        .get_definition(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 1,
+            column: 1,
+        })
         .await
         .expect("Error getting definition");
 
@@ -233,19 +272,31 @@ async fn test_multiple_usages_same_analyzer() {
 
     // First operation: type hint
     let type_result = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 30, 9)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 30,
+            column: 9,
+        })
         .await;
     assert!(type_result.is_ok());
 
     // Second operation: get definition
     let def_result = analyzer
-        .get_definition(sample_path.to_str().unwrap(), 32, 15)
+        .get_definition(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 32,
+            column: 15,
+        })
         .await;
     assert!(def_result.is_ok());
 
     // Third operation: another type hint
     let type_result2 = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 39, 9)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 39,
+            column: 9,
+        })
         .await;
     assert!(type_result2.is_ok());
 
@@ -261,7 +312,11 @@ async fn test_analyzer_workspace_loading() {
     // This test ensures the analyzer can properly load and work with the workspace
     // The first call should trigger workspace loading
     let result = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 5, 10)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 5,
+            column: 10,
+        })
         .await;
 
     // Should not error due to workspace loading issues
@@ -288,7 +343,11 @@ async fn test_type_hint_variable_with_name() {
     // Test type hint for 'doubled' variable on line 42 (should show "let doubled:
     // Vec<i32>")
     let type_info = analyzer
-        .get_type_hint(sample_path.to_str().unwrap(), 41, 9)
+        .get_type_hint(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 41,
+            column: 9,
+        })
         .await
         .expect("Error getting type hint")
         .expect("Expected type info but got None");
@@ -318,7 +377,11 @@ async fn test_get_completions_basic() {
     // Test getting completions at a position where we expect some completions
     // For example, after "std::" we should get completions for std modules
     let completions = analyzer
-        .get_completions(sample_path.to_str().unwrap(), 31, 18)
+        .get_completions(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 31,
+            column: 18,
+        })
         .await
         .expect("Error getting completions");
 
@@ -351,7 +414,11 @@ async fn test_get_completions_method_chaining() {
     // Test getting completions after a dot (method completions)
     // This should trigger method/field completions
     let completions = analyzer
-        .get_completions(sample_path.to_str().unwrap(), 32, 20)
+        .get_completions(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 32,
+            column: 20,
+        })
         .await
         .expect("Error getting completions");
 
