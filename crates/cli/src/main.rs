@@ -7,6 +7,8 @@ use clap::{Parser, Subcommand};
 use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
 use rustbelt_server::VERSION;
 
+mod repl;
+
 #[derive(Parser)]
 #[command(name = "rustbelt")]
 #[command(about = "rustbelt MCP Server - power up your Rust development")]
@@ -56,6 +58,11 @@ enum Commands {
         line: u32,
         /// Column number (1-based)
         column: u32,
+    },
+    /// Repl to a workspace for interactive queries
+    Repl {
+        /// Path to the workspace directory
+        workspace_path: String,
     },
 }
 
@@ -184,6 +191,12 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+        }
+        Commands::Repl { workspace_path } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            repl::run_repl(&workspace_path).await?;
         }
     }
 

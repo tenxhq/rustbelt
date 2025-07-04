@@ -29,6 +29,9 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# Interactive CLI
+rustyline = "14.0"
+
 # Build dependencies for version info
 [build-dependencies]
 anyhow = { workspace = true }
