@@ -36,7 +36,6 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 
 # Utilities
-bimap = { workspace = true }
 num_cpus = "1.16"
 
 # Serialization

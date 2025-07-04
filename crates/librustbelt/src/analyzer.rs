@@ -4,14 +4,19 @@
 //! making it easy to get type hints, definitions, and other semantic
 //! information.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
+use super::entities::{
+    CompletionItem, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
+};
 use anyhow::{Context, Result, bail};
-use bimap::BiMap;
 use ra_ap_ide::{
     Analysis, AnalysisHost, CallableSnippets, CompletionConfig, CompletionFieldsToResolve,
     CompletionItemKind as RaCompletionItemKind, FileId, FilePosition, FileRange, HoverConfig,
-    HoverDocFormat, LineCol, SubstTyLen, SymbolKind, TextRange, TextSize,
+    HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize,
 };
 use ra_ap_ide_db::{
     ChangeWithProcMacros,
@@ -22,104 +27,11 @@ use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
 use tracing::{debug, error, info, warn};
 
-/// Information about a definition location
-#[derive(Debug, Clone)]
-pub struct DefinitionInfo {
-    /// Path to the file containing the definition
-    pub file_path: String,
-    /// Line number (1-based) where the definition starts
-    pub line: u32,
-    /// Column number (1-based) where the definition starts
-    pub column: u32,
-    /// Line number (1-based) where the definition ends
-    pub end_line: u32,
-    /// Column number (1-based) where the definition ends
-    pub end_column: u32,
-    /// Name of the defined symbol
-    pub name: String,
-    /// Kind of the symbol (function, struct, etc.)
-    pub kind: Option<SymbolKind>,
-    /// Content of the definition
-    pub content: String,
-    /// Canonical module path
-    pub module: String,
-    /// Rustdoc description, if available
-    pub description: Option<String>,
-}
-
-/// Information about a rename operation result
-#[derive(Debug, Clone)]
-pub struct RenameResult {
-    /// Files that will be changed by the rename operation
-    pub file_changes: Vec<FileChange>,
-}
-
-/// Information about changes to a single file during rename
-#[derive(Debug, Clone)]
-pub struct FileChange {
-    /// Path to the file that will be changed
-    pub file_path: String,
-    /// List of text edits to apply to this file
-    pub edits: Vec<TextEdit>,
-}
-
-/// A single text edit within a file
-#[derive(Debug, Clone)]
-pub struct TextEdit {
-    /// Line number (1-based) where the edit starts
-    pub line: u32,
-    /// Column number (1-based) where the edit starts
-    pub column: u32,
-    /// Line number (1-based) where the edit ends
-    pub end_line: u32,
-    /// Column number (1-based) where the edit ends
-    pub end_column: u32,
-    /// The text to replace the range with
-    pub new_text: String,
-}
-
-/// A type hint for a given symbol
-#[derive(Debug, Clone)]
-pub struct TypeHint {
-    pub file_path: String,
-    /// Line number (1-based) where the edit starts
-    pub line: u32,
-    /// Column number (1-based) where the edit starts
-    pub column: u32,
-    pub symbol: String,
-    pub short_type: String,
-    pub canonical_type: String,
-}
-
-/// A completion item for a given cursor position
-#[derive(Debug, Clone)]
-pub struct CompletionItem {
-    /// The primary name/identifier
-    pub name: String,
-    /// Alternative names (aliases)
-    // pub aliases: Vec<String>,
-    /// Required import
-    pub required_import: Option<String>,
-    /// The trait this method comes from (for trait methods)
-    // pub trait_source: Option<String>,
-    /// The kind of completion (function, variable, etc.)
-    pub kind: Option<String>,
-    /// The text to insert when this completion is selected
-    // pub insert_text: String,
-    /// Function signature or type information
-    pub signature: Option<String>,
-    /// Documentation for this completion
-    pub documentation: Option<String>,
-    /// Whether this completion is deprecated
-    pub deprecated: bool,
-}
-
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
 pub struct RustAnalyzerish {
     host: AnalysisHost,
     vfs: Vfs,
-    file_map: BiMap<PathBuf, FileId>,
     current_project_root: Option<PathBuf>,
 }
 
@@ -135,12 +47,10 @@ impl RustAnalyzerish {
         Self {
             host: AnalysisHost::new(Some(100)),
             vfs: Vfs::default(),
-            file_map: BiMap::new(),
             current_project_root: None,
         }
     }
 
-    // TODO Change output to use a more structured format
     /// Get type hint information at the specified cursor position
     pub async fn get_type_hint(
         &mut self,
@@ -471,14 +381,16 @@ impl RustAnalyzerish {
                         let start_line_col = line_index.line_col(nav.focus_or_full_range().start());
                         let end_line_col = line_index.line_col(nav.focus_or_full_range().end());
 
-                        let file_path = if self.vfs.exists(nav.file_id) {
-                            let vfs_path = self.vfs.file_path(nav.file_id);
-                            vfs_path.to_string()
-                        } else {
-                            return Err(anyhow::anyhow!(
-                                "File ID {:?} not found in VFS",
-                                &nav.file_id
-                            ));
+                        let file_path = {
+                            if self.vfs.exists(nav.file_id) {
+                                let vfs_path = self.vfs.file_path(nav.file_id);
+                                vfs_path.to_string()
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "File ID {:?} not found in VFS",
+                                    &nav.file_id
+                                ));
+                            }
                         };
 
                         // Get module path using moniker if available
@@ -684,11 +596,13 @@ impl RustAnalyzerish {
 
         for (file_id, edit_tuple) in source_change.source_file_edits {
             // Get file path from file_id
-            let file_path = if self.vfs.exists(file_id) {
-                let vfs_path = self.vfs.file_path(file_id);
-                vfs_path.to_string()
-            } else {
-                return Err(anyhow::anyhow!("File ID {:?} not found in VFS", file_id));
+            let file_path = {
+                if self.vfs.exists(file_id) {
+                    let vfs_path = self.vfs.file_path(file_id);
+                    vfs_path.to_string()
+                } else {
+                    return Err(anyhow::anyhow!("File ID {:?} not found in VFS", file_id));
+                }
             };
 
             // Get line index for this file
@@ -799,66 +713,55 @@ impl RustAnalyzerish {
                 )
             })?);
 
-        // Configure cargo loading
+        // Configure cargo loading with better defaults
         let cargo_config = CargoConfig {
             sysroot: Some(RustLibSource::Discover),
             all_targets: true,
+            rustc_source: None,
+            cfg_overrides: Default::default(),
             ..Default::default()
         };
 
         let load_cargo_config = LoadCargoConfig {
             load_out_dirs_from_check: true,
             with_proc_macro_server: ProcMacroServerChoice::Sysroot,
-            prefill_caches: false,
+            prefill_caches: true,
         };
 
         info!("Loading workspace from: {}", abs_project_root);
+        let start_time = Instant::now();
 
         let (db, vfs, _proc_macro) =
-            load_workspace_at(project_root, &cargo_config, &load_cargo_config, &|_| {})?;
+            load_workspace_at(project_root, &cargo_config, &load_cargo_config, &|msg| {
+                debug!("Workspace loading progress: {}", msg);
+            })?;
 
         // Update our state with the loaded workspace
         self.host = AnalysisHost::with_database(db);
         self.vfs = vfs;
 
-        debug!("Workspace loaded successfully");
+        let load_duration = start_time.elapsed();
+        info!("Workspace loaded successfully in {:?}", load_duration);
 
-        // Prime caches for faster initial operations
-        info!("Priming caches for faster startup...");
         let analysis = self.host.analysis();
-        let cores = num_cpus::get();
-
-        if let Err(e) = analysis.parallel_prime_caches(cores, |progress| {
-            debug!(
-                "Indexing progress: {}/{} crates, currently indexing: {:?}",
-                progress.crates_done, progress.crates_total, progress.crates_currently_indexing
-            );
-        }) {
-            warn!("Cache priming was cancelled: {:?}", e);
-        } else {
-            debug!("Cache priming completed");
-        }
 
         Ok(analysis)
     }
 
     /// Load a file into the analysis host
     async fn load_file(&mut self, path: &Path) -> Result<FileId> {
-        // Check if file is already loaded
-        if let Some(&file_id) = self.file_map.get_by_left(path) {
-            return Ok(file_id);
+        // Verify file exists on disk before proceeding
+        if !path.exists() {
+            return Err(anyhow::anyhow!("File does not exist: {}", path.display()));
         }
 
-        // Convert path to absolute path
-        let abs_path =
-            AbsPathBuf::assert_utf8(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
-        let vfs_path: VfsPath = abs_path.into();
+        // Convert path to VFS path
+        let vfs_path = Self::path_to_vfs_path(path)?;
 
         debug!("Looking for file in VFS: {}", vfs_path);
 
         // Check if file exists in VFS (should be loaded by load_workspace_at)
         if let Some((file_id, _)) = self.vfs.file_id(&vfs_path) {
-            self.file_map.insert(path.to_path_buf(), file_id);
             debug!("Found file in VFS: {} -> {:?}", path.display(), file_id);
             return Ok(file_id);
         }
@@ -887,10 +790,22 @@ impl RustAnalyzerish {
         change.change_file(file_id, Some(contents));
         self.host.apply_change(change);
 
-        self.file_map.insert(path.to_path_buf(), file_id);
-
         debug!("Loaded file manually: {} -> {:?}", path.display(), file_id);
         Ok(file_id)
+    }
+
+    /// Check if a file exists in the VFS
+    pub fn file_exists(&self, file_id: FileId) -> bool {
+        self.vfs.exists(file_id)
+    }
+
+    /// Get file path from file ID
+    pub fn file_path(&self, file_id: FileId) -> Option<String> {
+        if self.vfs.exists(file_id) {
+            Some(self.vfs.file_path(file_id).to_string())
+        } else {
+            None
+        }
     }
 
     /// Apply rename edits to files on disk using rust-analyzer's
@@ -1005,68 +920,13 @@ impl RustAnalyzerish {
         offset += col_idx;
         Some(offset)
     }
-}
 
-impl std::fmt::Display for TypeHint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.symbol, self.short_type)
-    }
-}
-
-impl std::fmt::Display for DefinitionInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}\n{}",
-            self.file_path, self.line, self.column, self.content
-        )
-    }
-}
-
-impl std::fmt::Display for RenameResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "Successfully renamed symbol in {} file(s):",
-            self.file_changes.len()
-        )?;
-        writeln!(f)?;
-        for file_change in &self.file_changes {
-            writeln!(f, "{file_change}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for FileChange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.file_path)?;
-        for edit in &self.edits {
-            writeln!(f, "  ↳ {edit}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for TextEdit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}-{}:{} → '{}'",
-            self.line, self.column, self.end_line, self.end_column, self.new_text
-        )
-    }
-}
-
-impl std::fmt::Display for CompletionItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
-        if let Some(ref kind) = self.kind {
-            write!(f, " ({kind})")?;
-        }
-        if let Some(ref sig) = self.signature {
-            write!(f, " - {sig}")?;
-        }
-        Ok(())
+    /// Convert a PathBuf to VfsPath for VFS operations
+    fn path_to_vfs_path(path: &Path) -> Result<VfsPath> {
+        let abs_path = AbsPathBuf::assert_utf8(
+            path.canonicalize()
+                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
+        );
+        Ok(abs_path.into())
     }
 }

@@ -45,7 +45,11 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-bimap = "0.6.3"
 
 # Build dependencies
 vergen-gix = { version = "1.0.9", features = ["build"] }
+
+[profile.dev]
+# Make dev behave like release
+opt-level = 2
+debug = false
