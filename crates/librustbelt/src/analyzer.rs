@@ -233,23 +233,22 @@ impl RustAnalyzerish {
         let type_info = hover_result.info.markup.as_str();
 
         // Try to get the symbol name using goto_definition
-        let symbol_name =
-            match analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset }) {
-                Ok(Some(range_info)) => {
-                    // Look for a local definition that represents the variable
-                    if let Some(nav) = range_info.info.first() {
-                        // Check if this is a local variable by looking at the definition location
-                        if nav.file_id == file_id {
-                            Some(nav.name.to_string())
-                        } else {
-                            None
-                        }
+        let symbol_name = match analysis.goto_definition(FilePosition { file_id, offset }) {
+            Ok(Some(range_info)) => {
+                // Look for a local definition that represents the variable
+                if let Some(nav) = range_info.info.first() {
+                    // Check if this is a local variable by looking at the definition location
+                    if nav.file_id == file_id {
+                        Some(nav.name.to_string())
                     } else {
                         None
                     }
+                } else {
+                    None
                 }
-                _ => None,
-            };
+            }
+            _ => None,
+        };
 
         // Combine symbol name with type information
         let result = if let Some(ref name) = symbol_name {
@@ -466,7 +465,7 @@ impl RustAnalyzerish {
         // Happens when we query colum: 1 row: 1
         // TODO Report bug
         let goto_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            analysis.goto_definition(ra_ap_ide::FilePosition { file_id, offset })
+            analysis.goto_definition(FilePosition { file_id, offset })
         }));
 
         let definitions_result = match goto_result {
@@ -485,6 +484,7 @@ impl RustAnalyzerish {
                 let mut definitions = Vec::new();
 
                 for nav in range_info.info {
+                    println!("Range {:?}", nav);
                     // Get file path from file_id
                     if let Ok(line_index) = analysis.file_line_index(nav.file_id) {
                         let start_line_col = line_index.line_col(nav.focus_or_full_range().start());
@@ -502,7 +502,7 @@ impl RustAnalyzerish {
 
                         // Get module path using moniker if available
                         let module = if let Ok(Some(moniker_info)) =
-                            analysis.moniker(ra_ap_ide::FilePosition {
+                            analysis.moniker(FilePosition {
                                 file_id: nav.file_id,
                                 offset: nav.focus_or_full_range().start(),
                             }) {
@@ -564,7 +564,7 @@ impl RustAnalyzerish {
                             "// Content extraction failed: could not read source".to_string()
                         };
 
-                        definitions.push(DefinitionInfo {
+                        let definition = DefinitionInfo {
                             file_path,
                             line: start_line_col.line + 1, // Convert back to 1-based
                             column: start_line_col.col + 1, // Convert back to 1-based
@@ -575,7 +575,9 @@ impl RustAnalyzerish {
                             description: nav.description.clone(),
                             module,
                             content,
-                        });
+                        };
+                        println!("Found definition:\n{:?}", definition);
+                        definitions.push(definition);
                     }
                 }
 

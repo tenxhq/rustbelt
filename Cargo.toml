@@ -30,7 +30,7 @@ triomphe = "0.1"
 crossbeam-channel = "0.5"
 
 # Async runtime
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.46", features = ["full"] }
 async-trait = "0.1.88"
 
 # Serialization

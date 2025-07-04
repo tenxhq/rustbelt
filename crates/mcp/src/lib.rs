@@ -21,31 +21,9 @@ pub const VERSION: &str = concat!(
     ")"
 );
 
-/// Parameters for the get_type_hint tool
+/// Cursor coordinates
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct TypeHintParams {
-    /// Absolute path to the Rust source file
-    pub file_path: String,
-    /// Line number (1-based)
-    pub line: u32,
-    /// Column number (1-based)
-    pub column: u32,
-}
-
-/// Parameters for the get_definition tool
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GetDefinitionParams {
-    /// Absolute path to the Rust source file
-    pub file_path: String,
-    /// Line number (1-based)
-    pub line: u32,
-    /// Column number (1-based)
-    pub column: u32,
-}
-
-/// Parameters for the get_completions tool
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GetCompletionsParams {
+pub struct CursorCoordinates {
     /// Absolute path to the Rust source file
     pub file_path: String,
     /// Line number (1-based)
@@ -57,12 +35,8 @@ pub struct GetCompletionsParams {
 /// Parameters for the rename_symbol tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RenameParams {
-    /// Absolute path to the Rust source file
-    pub file_path: String,
-    /// Line number (1-based)
-    pub line: u32,
-    /// Column number (1-based)
-    pub column: u32,
+    /// Cursor Coordinates
+    pub cursor_coordinates: CursorCoordinates,
     /// New name for the symbol
     pub new_name: String,
 }
@@ -152,7 +126,7 @@ impl Rustbelt {
     async fn get_type_hint(
         &self,
         _ctx: &ServerCtx,
-        params: TypeHintParams,
+        params: CursorCoordinates,
     ) -> Result<CallToolResult> {
         match self
             .analyzer
@@ -178,7 +152,7 @@ impl Rustbelt {
     async fn get_definition(
         &self,
         _ctx: &ServerCtx,
-        params: GetDefinitionParams,
+        params: CursorCoordinates,
     ) -> Result<CallToolResult> {
         match self
             .analyzer
@@ -212,7 +186,7 @@ impl Rustbelt {
     async fn get_completions(
         &self,
         _ctx: &ServerCtx,
-        params: GetCompletionsParams,
+        params: CursorCoordinates,
     ) -> Result<CallToolResult> {
         match self
             .analyzer
@@ -253,9 +227,9 @@ impl Rustbelt {
             .lock()
             .await
             .rename_symbol(
-                &params.file_path,
-                params.line,
-                params.column,
+                &params.cursor_coordinates.file_path,
+                params.cursor_coordinates.line,
+                params.cursor_coordinates.column,
                 &params.new_name,
             )
             .await

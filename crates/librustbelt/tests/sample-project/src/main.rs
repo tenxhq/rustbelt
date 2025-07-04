@@ -40,7 +40,7 @@ pub fn main() {
     // Test various expressions for type hints
     let numbers = vec![1, 2, 3, 4, 5];
     let doubled: Vec<i32> = numbers.iter().map(|x| x * 2).collect();
-    let sum = doubled.iter().fold(0, |acc, x| acc + x);
+    let _sum = doubled.iter().fold(0, |acc, x| acc + x);
 
     // Complex generic types
     let nested: Vec<Option<Result<String, &str>>> =
@@ -79,6 +79,6 @@ where
     items.into_iter().map(processor).collect()
 }
 
-fn sum_numbers(a: i32, b: i32) -> i32 {
-    a.
-}
+// fn sum_numbers(a: i32, b: i32) -> i32 {
+//     a.
+// }

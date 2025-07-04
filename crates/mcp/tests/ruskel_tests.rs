@@ -3,9 +3,9 @@
 //! These tests verify the MCP server protocol implementation using the tenx-mcp
 //! client.
 
+use serde_json::Value;
+use std::collections::HashMap;
 use std::{process::Command, time::Duration};
-
-use serde_json::json;
 use tenx_mcp::{
     Client, Result, ServerAPI,
     schema::{ClientCapabilities, Implementation, InitializeResult},
@@ -48,7 +48,6 @@ async fn create_test_client() -> Result<(Client<()>, tokio::process::Child)> {
         "release"
     };
     let binary_path = target_dir.join(profile).join("rustbelt");
-    println!("{binary_path:?}");
 
     // Create client and connect to process
     let mut client = Client::new("test-client".to_string(), "1.0.0".to_string());
@@ -134,14 +133,14 @@ async fn test_mcp_server_call_tool() {
         .expect("Failed to initialize");
 
     // Call tool with a crate that should exist
-    let arguments = Some(json!({
-        "target": "serde",
-        "private": false
-    }));
+    let arguments = HashMap::from([
+        ("target".to_string(), Value::from("serde")),
+        ("private".to_string(), Value::from(false)),
+    ]);
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("ruskel", arguments),
+        client.call_tool("ruskel", Some(arguments.into())),
     )
     .await
     .expect("Timeout during tool call")
@@ -164,8 +163,12 @@ async fn test_mcp_server_invalid_tool() {
         .await
         .expect("Failed to initialize");
 
+    let arguments: HashMap<String, Value> = HashMap::new();
     // Call non-existent tool
-    let result = client.call_tool("non_existent_tool", Some(json!({}))).await;
+    let result = client
+        .call_tool("non_existent_tool", Some(arguments.into()))
+        .await;
+    println!("{:?}", result);
 
     // Should get an error
     assert!(result.is_err());
@@ -185,12 +188,11 @@ async fn test_mcp_server_invalid_arguments() {
         .expect("Failed to initialize");
 
     // Call tool without required target parameter
-    let arguments = Some(json!({
-        "private": true
-        // Missing required "target" field
-    }));
+    let arguments = HashMap::from([
+        ("private".to_string(), Value::from(true)), // Missing required "target" field
+    ]);
 
-    let result = client.call_tool("ruskel", arguments).await;
+    let result = client.call_tool("ruskel", Some(arguments.into())).await;
 
     // Should get an error due to invalid parameters
     assert!(result.is_err());
@@ -220,14 +222,14 @@ async fn test_mcp_server_multiple_requests() {
             .expect("Failed to list tools");
 
         // Call tool request
-        let arguments = Some(json!({
-            "target": target,
-            "private": false
-        }));
+        let arguments = HashMap::from([
+            ("target".to_string(), Value::from(target.to_string())),
+            ("private".to_string(), Value::from(false)),
+        ]);
 
         let result = timeout(
             Duration::from_secs(30),
-            client.call_tool("ruskel", arguments),
+            client.call_tool("ruskel", Some(arguments.into())),
         )
         .await
         .unwrap_or_else(|_| panic!("Timeout for target {target}"));
@@ -261,8 +263,11 @@ async fn test_mcp_server_error_recovery() {
         .expect("Failed to list tools");
     assert!(!result.tools.is_empty());
 
+    let arguments: HashMap<String, Value> = HashMap::new();
     // 2. Invalid tool name (should error)
-    let result = client.call_tool("non_existent_tool", Some(json!({}))).await;
+    let result = client
+        .call_tool("non_existent_tool", Some(arguments.into()))
+        .await;
     assert!(result.is_err());
 
     // 3. Valid request after error (server should recover)
@@ -273,24 +278,25 @@ async fn test_mcp_server_error_recovery() {
     assert!(!result.tools.is_empty());
 
     // 4. Invalid arguments (should error)
-    let invalid_args = Some(json!({
-        // Missing required "target"
-        "private": true
-    }));
+    let invalid_arguments = HashMap::from([
+        ("private".to_string(), Value::from(true)), // Missing required "target" field
+    ]);
 
-    let result = client.call_tool("ruskel", invalid_args).await;
+    let result = client
+        .call_tool("ruskel", Some(invalid_arguments.into()))
+        .await;
     // Should get an error due to invalid parameters
     assert!(result.is_err());
 
     // 5. Valid request after another error
-    let final_args = Some(json!({
-        "target": "serde",
-        "private": false
-    }));
+    let final_arguments = HashMap::from([
+        ("target".to_string(), Value::from("serde")),
+        ("private".to_string(), Value::from(false)),
+    ]);
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("ruskel", final_args),
+        client.call_tool("ruskel", Some(final_arguments.into())),
     )
     .await
     .expect("Timeout during final request");
@@ -323,15 +329,18 @@ async fn test_mcp_get_completions_tool() {
     let sample_file = workspace_root.join("crates/librustbelt/tests/sample-project/src/main.rs");
 
     // Call get_completions tool
-    let arguments = Some(json!({
-        "file_path": sample_file.to_string_lossy(),
-        "line": 31,
-        "column": 18
-    }));
+    let arguments = HashMap::from([
+        (
+            "file_path".to_string(),
+            Value::from(sample_file.to_string_lossy()),
+        ),
+        ("line".to_string(), Value::from(31)),
+        ("column".to_string(), Value::from(18)),
+    ]);
 
     let result = timeout(
         Duration::from_secs(30),
-        client.call_tool("get_completions", arguments),
+        client.call_tool("get_completions", Some(arguments.into())),
     )
     .await
     .expect("Timeout during get_completions call")
