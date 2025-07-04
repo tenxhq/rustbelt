@@ -122,8 +122,14 @@ impl Rustbelt {
         }
     }
 
+    /// Get type information for a symbol at a specific position in Rust code
+    ///
+    /// Provides detailed type information including variable types, function signatures,
+    /// struct/enum definitions, and generic parameters. Use this when you need to understand
+    /// the type of a symbol for code analysis, refactoring, or generating type-aware code.
+    ///
+    /// Returns human-readable type information or indicates if no type data is available.
     #[tool]
-    /// Get type information for a symbol at the given cursor position
     async fn get_type_hint(
         &self,
         _ctx: &ServerCtx,
@@ -142,8 +148,14 @@ impl Rustbelt {
         }
     }
 
+    /// Get definition location for a symbol at a specific position in Rust code
+    ///
+    /// Finds where symbols are defined - functions, types, variables, modules, macros,
+    /// and more. Essential for code navigation and understanding symbol relationships.
+    ///
+    /// Returns definition locations as "file_path:line_number:column_number" format,
+    /// or indicates if no definitions are found.
     #[tool]
-    /// Get definition location for a symbol at the given cursor position
     async fn get_definition(
         &self,
         _ctx: &ServerCtx,
@@ -170,8 +182,13 @@ impl Rustbelt {
         }
     }
 
+    /// Get completion suggestions at a specific position in Rust code
+    ///
+    /// Provides intelligent code completion suggestions including available methods,
+    /// functions, variables, keywords, imports, and more based on the current context.
+    ///
+    /// Returns a list of completion suggestions with types and descriptions.
     #[tool]
-    /// Get completion suggestions at the given cursor position
     async fn get_completions(
         &self,
         _ctx: &ServerCtx,
@@ -198,8 +215,15 @@ impl Rustbelt {
         }
     }
 
-    #[tool]
     /// Rename a symbol across the workspace
+    ///
+    /// Performs intelligent, workspace-wide symbol renaming that preserves code
+    /// correctness and updates all references. Works with functions, types, variables,
+    /// modules, macros, and more.
+    ///
+    /// Returns a summary of all changes made with file paths and line numbers, or
+    /// explains why the rename is not possible.
+    #[tool]
     async fn rename_symbol(
         &self,
         _ctx: &ServerCtx,
@@ -233,8 +257,14 @@ impl Rustbelt {
         }
     }
 
-    #[tool]
     /// View a Rust file with inlay hints embedded, such as explicit types
+    ///
+    /// Enhances code readability by displaying inline type annotations and other
+    /// helpful hints directly within the source code, including inferred types,
+    /// parameter names, return types, and implicit conversions.
+    ///
+    /// Returns the complete source file with inlay hints embedded as inline annotations.
+    #[tool]
     async fn view_inlay_hints(
         &self,
         _ctx: &ServerCtx,
