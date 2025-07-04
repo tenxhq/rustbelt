@@ -34,7 +34,7 @@ async fn test_type_hint_simple_variable() {
     let cursor = CursorCoordinates {
         file_path: sample_path.to_str().unwrap().to_string(),
         line: 31,
-        column: 9,
+        column: 13,
     };
     let type_info = analyzer
         .get_type_hint(&cursor)
@@ -361,8 +361,8 @@ async fn test_type_hint_variable_with_name() {
     );
     // TODO Why is Vec<i32> not showing up?
     assert!(
-        type_info.canonical_type.contains("Vec<i32, Global>"),
-        "Should contain type Vec<i32, Global>"
+        type_info.canonical_type.contains("Vec<i32>"),
+        "Should contain type Vec<i32>"
     );
     // TODO This would be nice, but it doesn't show up in the type info
     // assert!(type_info.contains("let"), "Should contain 'let' keyword");
