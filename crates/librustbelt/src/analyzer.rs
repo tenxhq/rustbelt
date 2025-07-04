@@ -43,9 +43,61 @@ impl RustAnalyzerish {
     /// Create a new RustAnalyzer instance
     pub fn new() -> Self {
         Self {
-            host: AnalysisHost::new(Some(100)),
+            host: AnalysisHost::new(None),
             vfs: Vfs::default(),
             current_project_root: None,
+        }
+    }
+
+    /// Debug information about the current cursor position
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - The cursor coordinates to debug
+    /// * `file_id` - The file ID for the file
+    /// * `offset` - The text offset within the file
+    /// * `analysis` - The analysis instance for reading file content
+    fn debug_cursor_position(
+        &self,
+        cursor: &CursorCoordinates,
+        file_id: FileId,
+        offset: TextSize,
+        analysis: &ra_ap_ide::Analysis,
+    ) {
+        debug!(
+            "Cursor position: file={:?}, line={}, column={}, offset={:?}",
+            file_id, cursor.line, cursor.column, offset
+        );
+
+        // Debug the current character at the offset
+        if let Ok(source_text) = analysis.file_text(file_id) {
+            let offset_usize: usize = offset.into();
+            if offset_usize < source_text.len() {
+                let current_char = source_text[offset_usize..].chars().next().unwrap_or('?');
+                debug!(
+                    "Current character at {}:{} (offset {:?}): '{}'",
+                    cursor.line, cursor.column, offset, current_char
+                );
+
+                // Show context around the cursor (5 chars before and after)
+                let start = offset_usize.saturating_sub(5);
+                let end = (offset_usize + 5).min(source_text.len());
+                let context = &source_text[start..end];
+                let cursor_pos = offset_usize - start;
+                debug!(
+                    "Context around cursor: '{}' (cursor at position {})",
+                    context.replace('\n', "\\n").replace('\t', "\\t"),
+                    cursor_pos
+                );
+            } else {
+                debug!(
+                    "Offset {:?} is out of bounds for file text length {}",
+                    offset,
+                    source_text.len()
+                );
+            }
+        } else {
+            debug!("Failed to read source text for file ID {:?}", file_id);
         }
     }
 
@@ -104,8 +156,8 @@ impl RustAnalyzerish {
         // Validate and convert cursor coordinates
         let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
-        // Create TextRange for the hover query
-        let text_range = TextRange::new(offset, offset + TextSize::from(1));
+        // Debug cursor position
+        self.debug_cursor_position(cursor, file_id, offset, &analysis);
 
         let hover_config = HoverConfig {
             links_in_hover: true,
@@ -210,6 +262,9 @@ impl RustAnalyzerish {
 
         // Validate and convert cursor coordinates
         let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
+
+        // Debug cursor position
+        self.debug_cursor_position(cursor, file_id, offset, &analysis);
 
         debug!(
             "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
@@ -338,27 +393,13 @@ impl RustAnalyzerish {
         // Validate and convert cursor coordinates
         let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
+        // Debug cursor position
+        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+
         debug!(
             "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
             file_id, offset, cursor.line, cursor.column
         );
-
-        // Debug the current character at the offset
-        if let Ok(source_text) = analysis.file_text(file_id) {
-            let offset_usize: usize = offset.into();
-            if offset_usize < source_text.len() {
-                let current_char = source_text[offset_usize..].chars().next().unwrap_or('?');
-                debug!("Current character at offset {offset:?}: '{current_char}'");
-            } else {
-                debug!(
-                    "Offset {:?} is out of bounds for file text length {}",
-                    offset,
-                    source_text.len()
-                );
-            }
-        } else {
-            debug!("Failed to read source text for file ID {:?}", file_id);
-        }
 
         // Query for definitions
         // Use std::panic::catch_unwind to handle potential panics in rust-analyzer
@@ -545,6 +586,9 @@ impl RustAnalyzerish {
 
         // Validate and convert cursor coordinates
         let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
+
+        // Debug cursor position
+        self.debug_cursor_position(cursor, file_id, offset, &analysis);
 
         debug!(
             "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",
