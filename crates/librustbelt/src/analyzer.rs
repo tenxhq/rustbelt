@@ -4,10 +4,7 @@
 //! making it easy to get type hints, definitions, and other semantic
 //! information.
 
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::path::{Path, PathBuf};
 
 use super::entities::{
     CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
@@ -23,9 +20,10 @@ use ra_ap_ide_db::{
     imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind},
 };
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_project_model::{CargoConfig, RustLibSource};
+use ra_ap_profile::StopWatch;
+use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
@@ -659,7 +657,7 @@ impl RustAnalyzerish {
 
     /// Find the project root by looking for Cargo.toml
     fn find_project_root(&self, file_path: &Path) -> Result<PathBuf> {
-        let mut current = if file_path.is_absolute() {
+        let path = if file_path.is_absolute() {
             info!(
                 "Finding project root for absolute path: {}",
                 file_path.display()
@@ -673,23 +671,13 @@ impl RustAnalyzerish {
             std::env::current_dir()?.join(file_path)
         };
 
-        loop {
-            info!("Checking for Cargo.toml in: {}", current.display());
-            let cargo_toml = current.join("Cargo.toml");
-            if cargo_toml.exists() {
-                return Ok(current.to_path_buf());
-            }
+        let abs_path = AbsPathBuf::assert_utf8(
+            path.canonicalize()
+                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
+        );
 
-            if let Some(parent) = current.parent() {
-                current = parent.to_path_buf();
-            } else {
-                // No Cargo.toml found, create a temporary project structure
-                return Err(anyhow::anyhow!(
-                    "No Cargo.toml found in parent directories of {}",
-                    file_path.display()
-                ));
-            }
-        }
+        let root = ProjectManifest::discover_single(&abs_path)?;
+        Ok(root.manifest_path().parent().to_path_buf().into())
     }
 
     /// Load workspace using load_workspace_at approach
@@ -714,25 +702,47 @@ impl RustAnalyzerish {
         let load_cargo_config = LoadCargoConfig {
             load_out_dirs_from_check: true,
             with_proc_macro_server: ProcMacroServerChoice::Sysroot,
-            prefill_caches: true,
+            prefill_caches: false, // We handle this manually to add more cores
         };
 
         info!("Loading workspace from: {}", abs_project_root);
-        let start_time = Instant::now();
+        let mut stop_watch = StopWatch::start();
 
         let (db, vfs, _proc_macro) =
             load_workspace_at(project_root, &cargo_config, &load_cargo_config, &|msg| {
-                debug!("Workspace loading progress: {}", msg);
+                trace!("Workspace loading progress: {}", msg);
             })?;
 
         // Update our state with the loaded workspace
         self.host = AnalysisHost::with_database(db);
         self.vfs = vfs;
 
-        let load_duration = start_time.elapsed();
-        info!("Workspace loaded successfully in {:?}", load_duration);
+        let elapsed = stop_watch.elapsed();
+        info!(
+            "Load time: {:?}ms, memory allocated: {}MB",
+            elapsed.time.as_millis(),
+            elapsed.memory.allocated.megabytes() as u64
+        );
 
         let analysis = self.host.analysis();
+
+        // Prime caches with all available cores for better performance
+        let threads = num_cpus::get_physical();
+        ra_ap_ide_db::prime_caches::parallel_prime_caches(
+            self.host.raw_database(),
+            threads,
+            &|progress| {
+                trace!("Cache priming progress: {:?}", progress);
+            },
+        );
+
+        let elapsed = stop_watch.elapsed();
+        info!(
+            "Cache priming time with {} cores: {:?}ms, total memory allocated: {}MB",
+            threads,
+            elapsed.time.as_millis(),
+            elapsed.memory.allocated.megabytes() as u64
+        );
 
         Ok(analysis)
     }
