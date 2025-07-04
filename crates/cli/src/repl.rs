@@ -234,9 +234,9 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             }
                         }
                     }
-                    "types" => {
+                    "hints" => {
                         if parts.len() != 2 {
-                            println!("Usage: types <file>");
+                            println!("Usage: hints <file>");
                             continue;
                         }
 
