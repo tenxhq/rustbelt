@@ -36,7 +36,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 
 # Utilities
-num_cpus = "1.16"
+num_cpus = "1.17"
 
 # Serialization
 serde = { workspace = true }

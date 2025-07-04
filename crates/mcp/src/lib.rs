@@ -24,8 +24,13 @@ pub const VERSION: &str = concat!(
 /// Parameters for the rename_symbol tool
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RenameParams {
-    /// Cursor Coordinates
-    pub cursor_coordinates: CursorCoordinates,
+    // TODO Do not nest CursorCoordinates here until tenx-mcp properly reports schema
+    /// Absolute path to the Rust source file
+    pub file_path: String,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
     /// New name for the symbol
     pub new_name: String,
 }
@@ -193,11 +198,16 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         params: RenameParams,
     ) -> Result<CallToolResult> {
+        let cursor = CursorCoordinates {
+            file_path: params.file_path,
+            line: params.line,
+            column: params.column,
+        };
         match self
             .analyzer
             .lock()
             .await
-            .rename_symbol(&params.cursor_coordinates, &params.new_name)
+            .rename_symbol(&cursor, &params.new_name)
             .await
         {
             Ok(Some(rename_result)) => {
