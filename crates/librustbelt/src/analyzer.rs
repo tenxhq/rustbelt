@@ -49,6 +49,43 @@ impl RustAnalyzerish {
         }
     }
 
+    /// Validate cursor coordinates and convert to text offset
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - The cursor coordinates to validate (must be 1-based)
+    /// * `line_index` - The line index for the file to validate against
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if coordinates are invalid (0 or out of bounds)
+    fn validate_and_convert_cursor(
+        &self,
+        cursor: &CursorCoordinates,
+        line_index: &ra_ap_ide::LineIndex,
+    ) -> Result<ra_ap_ide::TextSize> {
+        // Validate coordinates before proceeding
+        if cursor.line == 0 || cursor.column == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid coordinates in file '{}': line and column must be >= 1, got {}:{}",
+                cursor.file_path,
+                cursor.line,
+                cursor.column
+            ));
+        }
+
+        // Convert line/column to text offset from 1-based to 0-based indexing
+        let line_col: LineCol = cursor.into();
+        line_index.offset(line_col).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Coordinates out of bounds in file '{}': {}:{} (file may have changed)",
+                cursor.file_path,
+                cursor.line,
+                cursor.column
+            )
+        })
+    }
+
     /// Get type hint information at the specified cursor position
     pub async fn get_type_hint(&mut self, cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
         let path = PathBuf::from(&cursor.file_path);
@@ -60,19 +97,12 @@ impl RustAnalyzerish {
         let file_id = self.load_file(&path).await.context("Failed to load file")?;
 
         // Get the file's line index for position conversion
-        let line_index = analysis
-            .file_line_index(file_id)
-            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-        // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col: LineCol = cursor.into();
-        let offset = line_index.offset(line_col).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid line/column position: {}:{}",
-                cursor.line,
-                cursor.column
-            )
+        let line_index = analysis.file_line_index(file_id).map_err(|_| {
+            anyhow::anyhow!("Failed to get line index for file: {}", path.display())
         })?;
+
+        // Validate and convert cursor coordinates
+        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
         // Create TextRange for the hover query
         let text_range = TextRange::new(offset, offset + TextSize::from(1));
@@ -104,7 +134,7 @@ impl RustAnalyzerish {
                 range: text_range,
             },
         ) {
-            Ok(Some(hover_result)) => hover_result,
+            Ok(Some(result)) => result,
             Ok(None) => {
                 debug!(
                     "No hover info available for {}:{}:{}",
@@ -157,7 +187,7 @@ impl RustAnalyzerish {
             column: cursor.column,
             symbol: symbol_name.unwrap_or_else(|| "unknown".to_string()),
             short_type: type_info.to_string(),
-            canonical_type: type_info.to_string(), // TODO
+            canonical_type: type_info.to_string(),
         };
 
         Ok(Some(type_hint))
@@ -178,14 +208,8 @@ impl RustAnalyzerish {
             .file_line_index(file_id)
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
-        let line_col: LineCol = cursor.into();
-        let offset = line_index.offset(line_col).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid line/column position: {}:{}",
-                cursor.line,
-                cursor.column
-            )
-        })?;
+        // Validate and convert cursor coordinates
+        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
         debug!(
             "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
@@ -228,9 +252,9 @@ impl RustAnalyzerish {
             Ok(Some(ra_completions)) => {
                 let mut completions = Vec::new();
 
-                for ra_completion in ra_completions {
+                for completion_item in ra_completions {
                     // Convert rust-analyzer CompletionItem to our CompletionItem
-                    let kind = match ra_completion.kind {
+                    let kind = match completion_item.kind {
                         RaCompletionItemKind::SymbolKind(symbol_kind) => {
                             Some(format!("{:?}", symbol_kind))
                         }
@@ -245,25 +269,25 @@ impl RustAnalyzerish {
                         RaCompletionItemKind::Expression => Some("Expression".to_string()),
                     };
 
-                    let documentation = ra_completion
+                    let documentation = completion_item
                         .documentation
                         .map(|doc| doc.as_str().to_string());
 
                     // TODO Consider label left/right details
-                    let name = ra_completion.label.primary.into();
-                    let required_import = if ra_completion.import_to_add.is_empty() {
+                    let name = completion_item.label.primary.into();
+                    let required_import = if completion_item.import_to_add.is_empty() {
                         None
                     } else {
-                        Some(ra_completion.import_to_add.join(", "))
+                        Some(completion_item.import_to_add.join(", "))
                     };
 
                     let completion = CompletionItem {
                         name,
                         required_import,
                         kind,
-                        signature: ra_completion.detail,
+                        signature: completion_item.detail,
                         documentation,
-                        deprecated: ra_completion.deprecated,
+                        deprecated: completion_item.deprecated,
                     };
 
                     completions.push(completion);
@@ -311,15 +335,8 @@ impl RustAnalyzerish {
             .file_line_index(file_id)
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
-        // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col: LineCol = cursor.into();
-        let offset = line_index.offset(line_col).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid line/column position: {}:{}",
-                cursor.line,
-                cursor.column
-            )
-        })?;
+        // Validate and convert cursor coordinates
+        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
         debug!(
             "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
@@ -331,7 +348,7 @@ impl RustAnalyzerish {
             let offset_usize: usize = offset.into();
             if offset_usize < source_text.len() {
                 let current_char = source_text[offset_usize..].chars().next().unwrap_or('?');
-                println!("Current character at offset {offset:?}: '{current_char}'");
+                debug!("Current character at offset {offset:?}: '{current_char}'");
             } else {
                 debug!(
                     "Offset {:?} is out of bounds for file text length {}",
@@ -367,7 +384,7 @@ impl RustAnalyzerish {
                 let mut definitions = Vec::new();
 
                 for nav in range_info.info {
-                    println!("Range {:?}", nav);
+                    debug!("Navigation target: {:?}", nav);
                     // Get file path from file_id
                     if let Ok(line_index) = analysis.file_line_index(nav.file_id) {
                         let start_line_col = line_index.line_col(nav.focus_or_full_range().start());
@@ -461,7 +478,7 @@ impl RustAnalyzerish {
                             module,
                             content,
                         };
-                        println!("Found definition:\n{:?}", definition);
+                        debug!("Found definition: {:?}", definition);
                         definitions.push(definition);
                     }
                 }
@@ -526,15 +543,8 @@ impl RustAnalyzerish {
             .file_line_index(file_id)
             .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
 
-        // Convert line/column to text offset from 1-based to 0-based indexing
-        let line_col: LineCol = cursor.into();
-        let offset = line_index.offset(line_col).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid line/column position: {}:{}",
-                cursor.line,
-                cursor.column
-            )
-        })?;
+        // Validate and convert cursor coordinates
+        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
 
         debug!(
             "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",
