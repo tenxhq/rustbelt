@@ -1,6 +1,6 @@
 use anyhow::Result;
 use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
-use rustyline::DefaultEditor;
+use rustyline::{Config, DefaultEditor};
 use std::path::Path;
 
 fn resolve_path(workspace_path: &str, file_path: &str) -> String {
@@ -20,8 +20,34 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     // Initialize a standalone analyzer for the workspace
     let mut analyzer = RustAnalyzerish::new();
 
-    // TODO: We might want to add a method to explicitly set the workspace root
-    // For now, we'll rely on the analyzer to detect the workspace from file operations
+    // Configure rustyline with history support
+    let config = Config::builder()
+        .history_ignore_space(true)
+        .completion_type(rustyline::CompletionType::List)
+        .build();
+
+    let mut rl = DefaultEditor::with_config(config)?;
+
+    // Load history from file if it exists
+    let history_file = format!(
+        "{}/.rustbelt_history",
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+    );
+    let _ = rl.load_history(&history_file); // Ignore errors if file doesn't exist
+
+    // Start loading the project immediately in the background
+    println!("Loading project... This may take a moment on first run.");
+
+    // Prime the analyzer by accessing a dummy file in the workspace to trigger project loading
+    let dummy_file = Path::new(workspace_path).join("Cargo.toml");
+    if dummy_file.exists() {
+        let dummy_cursor = CursorCoordinates {
+            file_path: dummy_file.to_string_lossy().to_string(),
+            line: 1,
+            column: 1,
+        };
+        let _ = analyzer.get_type_hint(&dummy_cursor).await; // This will trigger project loading
+    }
 
     println!("Connected to workspace. Available commands:");
     println!("  help          - Show this help message");
@@ -31,9 +57,8 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("  rename <file> <line> <col> <new_name> - Rename symbol");
     println!("  quit/exit     - Exit the REPL");
     println!("  Note: File paths can be relative to the workspace or absolute");
+    println!("  Use up/down arrows to navigate command history");
     println!();
-
-    let mut rl = DefaultEditor::new()?;
 
     loop {
         let readline = rl.readline("rustbelt> ");
@@ -54,6 +79,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                 match parts[0] {
                     "quit" | "exit" => {
                         println!("Goodbye!");
+                        let _ = rl.save_history(&history_file); // Save history on exit
                         break;
                     }
                     "help" => {
@@ -270,10 +296,12 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
                 println!("CTRL-C");
+                let _ = rl.save_history(&history_file); // Save history on exit
                 break;
             }
             Err(rustyline::error::ReadlineError::Eof) => {
                 println!("CTRL-D");
+                let _ = rl.save_history(&history_file); // Save history on exit
                 break;
             }
             Err(err) => {
