@@ -19,6 +19,7 @@ ra_ap_project_model = { workspace = true }
 ra_ap_syntax = { workspace = true }
 ra_ap_vfs = { workspace = true }
 ra_ap_vfs-notify = { workspace = true }
+ra_ap_load-cargo = { workspace = true }
 
 # rust-analyzer transitive dependencies
 triomphe = { workspace = true }
@@ -36,6 +37,7 @@ tracing = { workspace = true }
 
 # Utilities
 bimap = { workspace = true }
+num_cpus = "1.16"
 
 # Serialization
 serde = { workspace = true }

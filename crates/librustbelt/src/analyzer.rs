@@ -8,22 +8,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use bimap::BiMap;
-use ra_ap_base_db::SourceRoot;
 use ra_ap_ide::{
-    AnalysisHost, CallableSnippets, CompletionConfig, CompletionFieldsToResolve,
+    Analysis, AnalysisHost, CallableSnippets, CompletionConfig, CompletionFieldsToResolve,
     CompletionItemKind as RaCompletionItemKind, FileId, FilePosition, FileRange, HoverConfig,
-    HoverDocFormat, LineCol, SubstTyLen, TextRange, TextSize,
+    HoverDocFormat, LineCol, SubstTyLen, SymbolKind, TextRange, TextSize,
 };
 use ra_ap_ide_db::{
-    ChangeWithProcMacros, FxHashMap, SymbolKind,
+    ChangeWithProcMacros,
     imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind},
 };
-use ra_ap_project_model::{CargoConfig, ProjectManifest, ProjectWorkspace, RustLibSource};
-use ra_ap_vfs::{
-    AbsPathBuf, Vfs, VfsPath,
-    loader::{Handle, LoadingProgress},
-};
-use ra_ap_vfs_notify as vfs_notify;
+use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
+use ra_ap_project_model::{CargoConfig, RustLibSource};
+use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
 use tracing::{debug, error, info, warn};
 
 /// Information about a definition location
@@ -123,8 +119,6 @@ pub struct CompletionItem {
 pub struct RustAnalyzerish {
     host: AnalysisHost,
     vfs: Vfs,
-    loader: vfs_notify::NotifyHandle,
-    message_receiver: crossbeam_channel::Receiver<ra_ap_vfs::loader::Message>,
     file_map: BiMap<PathBuf, FileId>,
     current_project_root: Option<PathBuf>,
 }
@@ -138,16 +132,9 @@ impl Default for RustAnalyzerish {
 impl RustAnalyzerish {
     /// Create a new RustAnalyzer instance
     pub fn new() -> Self {
-        let (message_sender, message_receiver) = crossbeam_channel::unbounded();
-        let vfs = Vfs::default();
-        let loader = vfs_notify::NotifyHandle::spawn(message_sender);
-
         Self {
             host: AnalysisHost::new(Some(100)),
-            vfs,
-            loader,
-            message_receiver,
-            // TODO Remove file_map and rely on VFS for file management
+            vfs: Vfs::default(),
             file_map: BiMap::new(),
             current_project_root: None,
         }
@@ -164,12 +151,10 @@ impl RustAnalyzerish {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
-        self.ensure_project_loaded(&path).await?;
+        let analysis = self.ensure_project_loaded(&path).await?;
 
         // Load the file if not already loaded
         let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        let analysis = self.host.analysis();
 
         // Get the file's line index for position conversion
         let line_index = analysis
@@ -283,11 +268,9 @@ impl RustAnalyzerish {
     ) -> Result<Option<Vec<CompletionItem>>> {
         let path = PathBuf::from(file_path);
 
-        self.ensure_project_loaded(&path).await?;
+        let analysis = self.ensure_project_loaded(&path).await?;
 
         let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        let analysis = self.host.analysis();
 
         let line_index = analysis
             .file_line_index(file_id)
@@ -417,12 +400,10 @@ impl RustAnalyzerish {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
-        self.ensure_project_loaded(&path).await?;
+        let analysis = self.ensure_project_loaded(&path).await?;
 
         // Load the file if not already loaded
         let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        let analysis = self.host.analysis();
 
         // Get the file's line index for position conversion
         let line_index = analysis
@@ -637,12 +618,10 @@ impl RustAnalyzerish {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
-        self.ensure_project_loaded(&path).await?;
+        let analysis = self.ensure_project_loaded(&path).await?;
 
         // Load the file if not already loaded
         let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        let analysis = self.host.analysis();
 
         // Get the file's line index for position conversion
         let line_index = analysis
@@ -746,14 +725,15 @@ impl RustAnalyzerish {
     }
 
     /// Ensure the project workspace is loaded for the given file path
-    async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<()> {
+    async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<Analysis> {
         let project_root = self.find_project_root(file_path)?;
 
         // Check if we already loaded a project
         // TODO Support multiple projects
         if self.current_project_root.is_some() {
             if self.current_project_root.as_ref() == Some(&project_root) {
-                return Ok(());
+                // Same project, just return the current analysis
+                return Ok(self.host.analysis());
             } else {
                 error!(
                     "Attempting to change workspaces, from {:?} to {:?}.",
@@ -768,10 +748,10 @@ impl RustAnalyzerish {
         }
 
         info!("Loading project workspace from: {}", project_root.display());
-        self.load_workspace(&project_root).await?;
+        let analysis = self.load_workspace(&project_root).await?;
         self.current_project_root = Some(project_root);
 
-        Ok(())
+        Ok(analysis)
     }
 
     /// Find the project root by looking for Cargo.toml
@@ -809,149 +789,107 @@ impl RustAnalyzerish {
         }
     }
 
-    /// Load workspace using evcxr's approach
-    async fn load_workspace(&mut self, project_root: &Path) -> Result<()> {
-        let mut change = ChangeWithProcMacros::default();
+    /// Load workspace using load_workspace_at approach
+    async fn load_workspace(&mut self, project_root: &Path) -> Result<Analysis> {
+        let abs_project_root =
+            AbsPathBuf::assert_utf8(project_root.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize project root: {}",
+                    project_root.display()
+                )
+            })?);
 
-        let cargo_toml_path = project_root.join("Cargo.toml");
+        // Configure cargo loading
+        let cargo_config = CargoConfig {
+            sysroot: Some(RustLibSource::Discover),
+            all_targets: true,
+            ..Default::default()
+        };
 
-        if cargo_toml_path.exists() {
-            // Load project using Cargo.toml
-            let abs_cargo_toml = cargo_toml_path.canonicalize().with_context(|| {
-                format!("Failed to canonicalize path: {}", cargo_toml_path.display())
-            })?;
-            let manifest =
-                ProjectManifest::from_manifest_file(AbsPathBuf::assert_utf8(abs_cargo_toml))?;
-            let config = CargoConfig {
-                sysroot: Some(RustLibSource::Discover),
-                ..CargoConfig::default()
-            };
+        let load_cargo_config = LoadCargoConfig {
+            load_out_dirs_from_check: true,
+            with_proc_macro_server: ProcMacroServerChoice::Sysroot,
+            prefill_caches: false,
+        };
 
-            let workspace = ProjectWorkspace::load(manifest, &config, &|_| {})?;
+        info!("Loading workspace from: {}", abs_project_root);
 
-            // Set up VFS loader
-            let load = workspace
-                .to_roots()
-                .iter()
-                .map(|root| {
-                    ra_ap_vfs::loader::Entry::Directories(ra_ap_vfs::loader::Directories {
-                        extensions: vec!["rs".to_owned()],
-                        include: root.include.clone(),
-                        exclude: root.exclude.clone(),
-                    })
-                })
-                .collect();
+        let (db, vfs, _proc_macro) =
+            load_workspace_at(project_root, &cargo_config, &load_cargo_config, &|_| {})?;
 
-            self.loader.set_config(ra_ap_vfs::loader::Config {
-                version: 1,
-                load,
-                watch: vec![],
-            });
+        // Update our state with the loaded workspace
+        self.host = AnalysisHost::with_database(db);
+        self.vfs = vfs;
 
-            // Process VFS messages
-            // TODO Perform this in a concurrent tokio task
-            for message in &self.message_receiver {
-                match message {
-                    ra_ap_vfs::loader::Message::Progress { n_done, .. } => {
-                        if n_done == LoadingProgress::Finished {
-                            break;
-                        }
-                    }
-                    ra_ap_vfs::loader::Message::Loaded { files }
-                    | ra_ap_vfs::loader::Message::Changed { files } => {
-                        for (path, contents) in files {
-                            let vfs_path: VfsPath = path.to_path_buf().into();
-                            self.vfs.set_file_contents(vfs_path, contents.clone());
-                        }
-                    }
-                }
-            }
+        debug!("Workspace loaded successfully");
 
-            // Apply VFS changes
-            for (file_id, changed_file) in self.vfs.take_changes() {
-                let new_contents = match changed_file.change {
-                    ra_ap_vfs::Change::Create(v, _) | ra_ap_vfs::Change::Modify(v, _) => {
-                        if let Ok(text) = std::str::from_utf8(&v) {
-                            Some(text.to_owned())
-                        } else {
-                            None
-                        }
-                    }
-                    ra_ap_vfs::Change::Delete => None,
-                };
-                change.change_file(file_id, new_contents);
-            }
+        // Prime caches for faster initial operations
+        info!("Priming caches for faster startup...");
+        let analysis = self.host.analysis();
+        let cores = num_cpus::get();
 
-            // Set up source roots
-            change.set_roots(
-                ra_ap_vfs::file_set::FileSetConfig::default()
-                    .partition(&self.vfs)
-                    .into_iter()
-                    .map(SourceRoot::new_local)
-                    .collect(),
-            );
-
-            // Set up crate graph
-            let (crate_graph, _) = workspace.to_crate_graph(
-                &mut |path| {
-                    self.vfs
-                        .file_id(&path.to_path_buf().into())
-                        .map(|(id, _)| id)
-                },
-                &FxHashMap::default(),
-            );
-
-            change.set_crate_graph(crate_graph);
-        } else {
-            // Create minimal project structure if no Cargo.toml
+        if let Err(e) = analysis.parallel_prime_caches(cores, |progress| {
             debug!(
-                "No Cargo.toml found in project root: {}",
-                project_root.display()
+                "Indexing progress: {}/{} crates, currently indexing: {:?}",
+                progress.crates_done, progress.crates_total, progress.crates_currently_indexing
             );
-            Err(anyhow::anyhow!(
-                "No Cargo.toml found in project root: {}",
-                project_root.display()
-            ))?;
+        }) {
+            warn!("Cache priming was cancelled: {:?}", e);
+        } else {
+            debug!("Cache priming completed");
         }
 
-        self.host.apply_change(change);
-        debug!("Workspace loaded successfully");
-        Ok(())
+        Ok(analysis)
     }
 
     /// Load a file into the analysis host
     async fn load_file(&mut self, path: &Path) -> Result<FileId> {
         // Check if file is already loaded
-        // TODO Check in VFS if file is loaded
         if let Some(&file_id) = self.file_map.get_by_left(path) {
             return Ok(file_id);
         }
 
-        // Read file contents
+        // Convert path to absolute path
+        let abs_path =
+            AbsPathBuf::assert_utf8(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+        let vfs_path: VfsPath = abs_path.into();
+
+        debug!("Looking for file in VFS: {}", vfs_path);
+
+        // Check if file exists in VFS (should be loaded by load_workspace_at)
+        if let Some((file_id, _)) = self.vfs.file_id(&vfs_path) {
+            self.file_map.insert(path.to_path_buf(), file_id);
+            debug!("Found file in VFS: {} -> {:?}", path.display(), file_id);
+            return Ok(file_id);
+        }
+
+        // If file is not in VFS, it might be outside the workspace
+        // Try to load it manually
+        debug!(
+            "File not found in VFS, trying to load manually: {}",
+            path.display()
+        );
+
         let contents = tokio::fs::read_to_string(path)
             .await
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         // Add file to VFS
-        let abs_path =
-            AbsPathBuf::assert_utf8(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
-        let vfs_path: VfsPath = abs_path.into();
         self.vfs
             .set_file_contents(vfs_path.clone(), Some(contents.bytes().collect()));
 
-        let (file_id, _) = self
-            .vfs
-            .file_id(&vfs_path)
-            .ok_or_else(|| anyhow::anyhow!("Failed to get file ID from VFS"))?;
+        let (file_id, _) = self.vfs.file_id(&vfs_path).ok_or_else(|| {
+            anyhow::anyhow!("Failed to get file ID from VFS after manual loading")
+        })?;
 
-        // Update file contents in the change
+        // Update file contents in the analysis host
         let mut change = ChangeWithProcMacros::default();
         change.change_file(file_id, Some(contents));
         self.host.apply_change(change);
 
         self.file_map.insert(path.to_path_buf(), file_id);
 
-        debug!("Loaded file: {} -> {:?}", path.display(), file_id);
+        debug!("Loaded file manually: {} -> {:?}", path.display(), file_id);
         Ok(file_id)
     }
 

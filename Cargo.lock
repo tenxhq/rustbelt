@@ -2562,6 +2562,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hermit-abi"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3205,11 +3211,13 @@ dependencies = [
  "async-trait",
  "bimap",
  "crossbeam-channel",
+ "num_cpus",
  "ra_ap_base_db",
  "ra_ap_cfg",
  "ra_ap_ide",
  "ra_ap_ide_db",
  "ra_ap_intern",
+ "ra_ap_load-cargo",
  "ra_ap_project_model",
  "ra_ap_syntax",
  "ra_ap_vfs",
@@ -3523,6 +3531,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
 ]
 
 [[package]]
@@ -4421,6 +4439,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ra_ap_load-cargo"
+version = "0.0.289"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "572dbdd5d39fa6817b9ae44d803f29b2fd82e16a8260abb301e74933223d0115"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "itertools 0.14.0",
+ "ra_ap_hir_expand",
+ "ra_ap_ide_db",
+ "ra_ap_intern",
+ "ra_ap_proc_macro_api",
+ "ra_ap_project_model",
+ "ra_ap_span",
+ "ra_ap_tt",
+ "ra_ap_vfs",
+ "ra_ap_vfs-notify",
+ "tracing",
+]
+
+[[package]]
 name = "ra_ap_mbe"
 version = "0.0.289"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4459,6 +4498,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c638a1a098d34934f6361f1a13853a4933b79b5a1ff096ccc45e9ba30783fe9"
 dependencies = [
  "camino",
+]
+
+[[package]]
+name = "ra_ap_proc_macro_api"
+version = "0.0.289"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13b0e99997631f9cf86ebf3e3df4eb860aa9854a2aa1eee39d16b206910e273b"
+dependencies = [
+ "indexmap",
+ "ra_ap_intern",
+ "ra_ap_paths",
+ "ra_ap_span",
+ "ra_ap_stdx",
+ "ra_ap_tt",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ use std::{
 };
 
 use librustbelt::analyzer::RustAnalyzerish;
-use ra_ap_ide_db::SymbolKind;
+use ra_ap_ide::SymbolKind;
 use tokio::sync::Mutex;
 
 // Shared analyzer instance that gets initialized once
