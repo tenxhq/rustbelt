@@ -257,7 +257,7 @@ impl Rustbelt {
         }
     }
 
-    /// View a Rust file with inlay hints embedded, such as explicit types
+    /// View a Rust file with inlay hints embedded
     ///
     /// Enhances code readability by displaying inline type annotations and other
     /// helpful hints directly within the source code, including inferred types,

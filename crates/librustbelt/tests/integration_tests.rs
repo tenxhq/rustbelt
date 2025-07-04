@@ -479,7 +479,10 @@ async fn test_view_inlay_hints() {
     );
 
     // Adding named arguments
-    // assert!(file_with_inlay_hints.contains("Person::new(name: \"Alice\".to_string()"), "Should show named arguments");
+    assert!(
+        file_with_inlay_hints.contains("Person::new(name: \"Alice\".to_string()"),
+        "Should show named arguments"
+    );
 
     // Keeping existing types intact
     assert!(

@@ -38,7 +38,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 | `get_type_hint`    | Alpha | Get type information for a symbol at cursor position                        | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
 | `get_definition`   | Alpha | Get definition for symbol at cursor position                                | `file_path`, `line`, `column` |
 | `rename_symbol`    | Alpha | Rename a symbol across the workspace                                        | `file_path`, `line`, `column`, `new_name` |
-| `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as type hints     | `file_path` |
+| `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as types or parameter names     | `file_path` |
 
 
 ## Planned Improvements

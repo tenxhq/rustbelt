@@ -705,11 +705,11 @@ impl RustAnalyzerish {
 
         // Configure inlay hints to show type information
         let inlay_config = InlayHintsConfig {
-            render_colons: true,
+            render_colons: false,
             type_hints: true,
             sized_bound: false,
             discriminant_hints: DiscriminantHints::Never,
-            parameter_hints: false,
+            parameter_hints: true,
             generic_parameter_hints: GenericParameterHints {
                 type_hints: false,
                 lifetime_hints: false,
@@ -732,7 +732,13 @@ impl RustAnalyzerish {
             closure_style: ClosureStyle::ImplFn,
             max_length: None,
             closing_brace_hints_min_lines: None,
-            fields_to_resolve: InlayFieldsToResolve::empty(),
+            fields_to_resolve: InlayFieldsToResolve {
+                resolve_text_edits: false,
+                resolve_hint_tooltip: false,
+                resolve_label_tooltip: false,
+                resolve_label_location: false,
+                resolve_label_command: false,
+            },
         };
 
         // Get inlay hints for the entire file
@@ -750,14 +756,6 @@ impl RustAnalyzerish {
         let mut builder = TextEditBuilder::default();
 
         for hint in inlay_hints {
-            // Use hint.position to determine where to insert the annotation
-            let offset = match hint.position {
-                InlayHintPosition::Before => hint.range.start(),
-                InlayHintPosition::After => hint.range.end(),
-            };
-
-            debug!("Inlay hint at offset {:?}: {:?}", offset, hint.label);
-
             // Create the type annotation text
             let hint_text = hint
                 .label
@@ -767,16 +765,21 @@ impl RustAnalyzerish {
                 .collect::<Vec<_>>()
                 .join("");
 
+            let (offset, full_hint_text) = match hint.position {
+                InlayHintPosition::After => (hint.range.end(), format!(": {}", hint_text)),
+                InlayHintPosition::Before => (hint.range.start(), format!("{}: ", hint_text)),
+            };
+
+            trace!("Inlay hint at offset {:?}: {:?}", offset, hint);
+
             // Insert the annotation at the correct position
-            builder.insert(offset, hint_text);
+            builder.insert(offset, full_hint_text);
         }
 
         // Apply all edits to the file content
         let text_edit = builder.finish();
         let mut result = file_content.to_string();
         text_edit.apply(&mut result);
-
-        debug!("Generated annotated file with {} characters", result.len());
 
         Ok(result)
     }
