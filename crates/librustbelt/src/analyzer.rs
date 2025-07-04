@@ -159,6 +159,9 @@ impl RustAnalyzerish {
         // Debug cursor position
         self.debug_cursor_position(cursor, file_id, offset, &analysis);
 
+        // Create TextRange for the hover query - use a single point range
+        let text_range = TextRange::new(offset, offset);
+
         let hover_config = HoverConfig {
             links_in_hover: true,
             memory_layout: None,
@@ -169,8 +172,8 @@ impl RustAnalyzerish {
             max_trait_assoc_items_count: Some(10),
             max_fields_count: Some(10),
             max_enum_variants_count: Some(10),
-            max_subst_ty_len: SubstTyLen::Hide,
-            show_drop_glue: false,
+            max_subst_ty_len: SubstTyLen::Unlimited,
+            show_drop_glue: true,
         };
 
         debug!(
