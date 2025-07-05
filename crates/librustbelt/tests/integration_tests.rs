@@ -455,7 +455,7 @@ async fn test_view_inlay_hints() {
     // Test getting completions after a dot (method completions)
     // This should trigger method/field completions
     let file_with_inlay_hints = analyzer
-        .view_inlay_hints(sample_path.to_str().unwrap())
+        .view_inlay_hints(sample_path.to_str().unwrap(), None, None)
         .await
         .expect("Error viewing inlay hints");
 
@@ -488,5 +488,64 @@ async fn test_view_inlay_hints() {
     assert!(
         file_with_inlay_hints.contains("let doubled: Vec<i32>"),
         "Should keep existing types intact"
+    );
+}
+
+#[tokio::test]
+async fn test_view_inlay_hints_with_line_range() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test with line range from lines 30-45 (includes main function start to line 45)
+    let range_hints = analyzer
+        .view_inlay_hints(sample_path.to_str().unwrap(), Some(30), Some(45))
+        .await
+        .expect("Error viewing inlay hints with range");
+
+    println!("Range hints (lines 30-45): {}", range_hints);
+
+    // Should contain hints from the specified range
+    assert!(
+        range_hints.contains("let mut people: HashMap<String, Person>"),
+        "Should show inlay type hint for people in range"
+    );
+    assert!(
+        range_hints.contains("let person: Person"),
+        "Should show inlay type hint for person in range"
+    );
+    assert!(
+        range_hints.contains("let numbers: Vec<i32>"),
+        "Should show inlay type hint for numbers in range"
+    );
+
+    // Should NOT contain hints from outside the range (e.g., struct definition)
+    assert!(
+        !range_hints.contains("pub struct Person"),
+        "Should not contain struct definition from outside range"
+    );
+
+    // Test with a smaller range (lines 41-43)
+    let small_range_hints = analyzer
+        .view_inlay_hints(sample_path.to_str().unwrap(), Some(41), Some(43))
+        .await
+        .expect("Error viewing inlay hints with small range");
+
+    println!("Small range hints (lines 41-43): {}", small_range_hints);
+
+    // Should contain the specific lines
+    assert!(
+        small_range_hints.contains("let numbers: Vec<i32>"),
+        "Should show inlay type hint for numbers in small range"
+    );
+    assert!(
+        small_range_hints.contains("let doubled: Vec<i32>"),
+        "Should show inlay type hint for doubled in small range"
+    );
+
+    // Should NOT contain hints from outside the small range
+    assert!(
+        !small_range_hints.contains("let mut people: HashMap<String, Person>"),
+        "Should not contain people definition from outside small range"
     );
 }

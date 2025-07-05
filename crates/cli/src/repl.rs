@@ -242,7 +242,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
 
                         let file_path = resolve_path(workspace_path, parts[1]);
 
-                        match analyzer.view_inlay_hints(&file_path).await {
+                        match analyzer.view_inlay_hints(&file_path, None, None).await {
                             Ok(annotated_content) => {
                                 println!("File with inlay hints:");
                                 println!("=====================================");

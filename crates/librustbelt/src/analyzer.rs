@@ -689,7 +689,12 @@ impl RustAnalyzerish {
     }
 
     /// View a Rust file with inlay hints
-    pub async fn view_inlay_hints(&mut self, file_path: &str) -> Result<String> {
+    pub async fn view_inlay_hints(
+        &mut self,
+        file_path: &str,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    ) -> Result<String> {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
@@ -776,12 +781,26 @@ impl RustAnalyzerish {
             builder.insert(offset, full_hint_text);
         }
 
-        // Apply all edits to the file content
+        // Apply all edits to the content
         let text_edit = builder.finish();
         let mut result = file_content.to_string();
         text_edit.apply(&mut result);
 
-        Ok(result)
+        // If line range was specified, extract only that range from the result
+        if let (Some(start), Some(end)) = (start_line, end_line) {
+            let lines: Vec<&str> = result.lines().collect();
+            let start_idx = (start.saturating_sub(1) as usize).min(lines.len());
+            let end_idx = (end as usize).min(lines.len());
+
+            if start_idx >= lines.len() || end_idx <= start_idx {
+                return Err(anyhow::anyhow!("Range outside of the file limits"));
+            }
+
+            let selected_lines = &lines[start_idx..end_idx];
+            Ok(selected_lines.join("\n"))
+        } else {
+            Ok(result)
+        }
     }
 
     /// Ensure the project workspace is loaded for the given file path
@@ -980,42 +999,30 @@ impl RustAnalyzerish {
             // Create TextEditBuilder to handle multiple edits atomically
             let mut builder = TextEditBuilder::default();
 
-            // Create line index for position conversion
-            let lines: Vec<&str> = content.lines().collect();
+            // Create line index for UTF-8 safe position conversion
+            let line_index = LineIndex::new(&content);
 
             // Add all edits to the builder (no need to sort - TextEditBuilder handles
             // ordering)
             for edit in &file_change.edits {
-                // TODO use line_index.offset
+                // Convert 1-based line/column to character offset using LineIndex for UTF-8 safety
+                let start_offset =
+                    Self::line_col_to_offset_with_index(&line_index, edit.line, edit.column)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Invalid start position {}:{} in file {}",
+                                edit.line,
+                                edit.column,
+                                file_change.file_path
+                            )
+                        })?;
 
-                // Get the file's line index for position conversion
-                // let line_index = analysis
-                // .file_line_index(file_id)
-                // .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-                // Convert line/column to text offset from 1-based to 0-based indexing
-                // let line_col = LineCol {
-                //     line: line.saturating_sub(1),
-                //     col: column.saturating_sub(1),
-                // };
-                // let offset = line_index
-                //     .offset(line_col)
-                //     .ok_or_else(|| anyhow::anyhow!("Invalid line/column position: {}:{}",
-                // line, column))?;
-
-                // Convert 1-based line/column to character offset
-                let start_offset = Self::line_col_to_offset(&lines, edit.line, edit.column)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Invalid start position {}:{} in file {}",
-                            edit.line,
-                            edit.column,
-                            file_change.file_path
-                        )
-                    })?;
-
-                let end_offset = Self::line_col_to_offset(&lines, edit.end_line, edit.end_column)
-                    .ok_or_else(|| {
+                let end_offset = Self::line_col_to_offset_with_index(
+                    &line_index,
+                    edit.end_line,
+                    edit.end_column,
+                )
+                .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Invalid end position {}:{} in file {}",
                         edit.end_line,
@@ -1025,10 +1032,7 @@ impl RustAnalyzerish {
                 })?;
 
                 // Create rust-analyzer TextRange
-                let range = TextRange::new(
-                    TextSize::from(start_offset as u32),
-                    TextSize::from(end_offset as u32),
-                );
+                let range = TextRange::new(start_offset, end_offset);
 
                 // Add the replacement to the builder
                 builder.replace(range, edit.new_text.clone());
@@ -1049,30 +1053,17 @@ impl RustAnalyzerish {
         Ok(())
     }
 
-    // TODO Use ra line_index.offset instead of this implementation
-    /// Convert 1-based line/column to 0-based character offset
-    fn line_col_to_offset(lines: &[&str], line: u32, column: u32) -> Option<usize> {
-        let line_idx = (line.saturating_sub(1)) as usize;
-        let col_idx = (column.saturating_sub(1)) as usize;
-
-        if line_idx >= lines.len() {
-            return None;
-        }
-
-        // Calculate offset by summing all characters in previous lines plus newlines
-        let mut offset = 0;
-        for line in lines.iter().take(line_idx) {
-            offset += line.len() + 1; // +1 for newline character
-        }
-
-        // Add column offset, but ensure it doesn't exceed line length
-        let line_content = lines[line_idx];
-        if col_idx > line_content.len() {
-            return None;
-        }
-
-        offset += col_idx;
-        Some(offset)
+    /// Convert 1-based line/column to TextSize offset using LineIndex for UTF-8 safety
+    fn line_col_to_offset_with_index(
+        line_index: &LineIndex,
+        line: u32,
+        column: u32,
+    ) -> Option<TextSize> {
+        let line_col = LineCol {
+            line: line.saturating_sub(1),
+            col: column.saturating_sub(1),
+        };
+        line_index.offset(line_col)
     }
 
     /// Convert a PathBuf to VfsPath for VFS operations

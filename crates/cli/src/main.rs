@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
             // Initialize a standalone analyzer for CLI usage
             let mut analyzer = RustAnalyzerish::new();
 
-            match analyzer.view_inlay_hints(&file_path).await {
+            match analyzer.view_inlay_hints(&file_path, None, None).await {
                 Ok(annotated_content) => {
                     println!("{}", annotated_content);
                 }

@@ -59,6 +59,12 @@ pub struct RuskelParams {
 pub struct ViewInlayHintsParams {
     /// Absolute path to the Rust source file
     pub file_path: String,
+    /// Optional starting line number (1-based, inclusive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    /// Optional ending line number (1-based, inclusive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
 }
 
 /// Rust-Analyzer MCP server connection
@@ -263,7 +269,11 @@ impl Rustbelt {
     /// helpful hints directly within the source code, including inferred types,
     /// parameter names, return types, and implicit conversions.
     ///
-    /// Returns the complete source file with inlay hints embedded as inline annotations.
+    /// If start_line and end_line are provided, only the specified range of lines
+    /// will be returned with inlay hints. Both parameters are 1-based and inclusive.
+    /// If neither parameter is provided, the entire file is processed.
+    ///
+    /// Returns the source file content (full file or specified range) with inlay hints embedded as inline annotations.
     #[tool]
     async fn view_inlay_hints(
         &self,
@@ -274,7 +284,7 @@ impl Rustbelt {
             .analyzer
             .lock()
             .await
-            .view_inlay_hints(&params.file_path)
+            .view_inlay_hints(&params.file_path, params.start_line, params.end_line)
             .await
         {
             Ok(annotated_content) => Ok(CallToolResult::new()
