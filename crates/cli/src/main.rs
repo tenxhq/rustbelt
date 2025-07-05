@@ -59,6 +59,15 @@ enum Commands {
         /// Column number (1-based)
         column: u32,
     },
+    /// Find all references to a symbol at a specific position
+    FindReferences {
+        /// Path to the Rust source file
+        file_path: String,
+        /// Line number (1-based)
+        line: u32,
+        /// Column number (1-based)
+        column: u32,
+    },
     /// View a Rust file with embedded inlay hints such as types and named arguments
     ViewInlayHints {
         /// Path to the Rust source file
@@ -193,6 +202,46 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Error getting completions: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::FindReferences {
+            file_path,
+            line,
+            column,
+        } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            // Initialize a standalone analyzer for CLI usage
+            let mut analyzer = RustAnalyzerish::new();
+
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+            };
+
+            match analyzer.find_references(&cursor).await {
+                Ok(Some(references)) => {
+                    println!(
+                        "Found {} reference(s) to symbol at {}:{}:{}:",
+                        references.len(),
+                        file_path,
+                        line,
+                        column
+                    );
+                    for reference in references {
+                        println!("  {}", reference);
+                    }
+                }
+                Ok(None) => {
+                    eprintln!("No references found at {file_path}:{line}:{column}");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error finding references: {e}");
                     std::process::exit(1);
                 }
             }

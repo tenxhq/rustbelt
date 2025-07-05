@@ -7,7 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use super::entities::{
-    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
+    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
+    TextEdit, TypeHint,
 };
 use anyhow::{Context, Result, bail};
 use ra_ap_hir::ClosureStyle;
@@ -560,6 +561,152 @@ impl RustAnalyzerish {
         }
 
         Ok(rename_result)
+    }
+
+    /// Find all references to a symbol at the specified cursor position
+    pub async fn find_references(
+        &mut self,
+        cursor: &CursorCoordinates,
+    ) -> Result<Option<Vec<ReferenceInfo>>> {
+        let path = PathBuf::from(&cursor.file_path);
+
+        // Ensure the project/workspace is loaded
+        let analysis = self.ensure_project_loaded(&path).await?;
+
+        // Load the file if not already loaded
+        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+
+        // Get the file's line index for position conversion
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        // Validate and convert cursor coordinates
+        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
+
+        // Debug cursor position
+        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+
+        debug!(
+            "Attempting find_all_refs query for file {:?} at offset {:?} (line {} col {})",
+            file_id, offset, cursor.line, cursor.column
+        );
+
+        // Query for all references
+        let references_result = match analysis.find_all_refs(FilePosition { file_id, offset }, None)
+        {
+            Ok(Some(search_results)) => search_results,
+            Ok(None) => {
+                debug!("No references found at position");
+                return Ok(None);
+            }
+            Err(e) => {
+                debug!("Error finding references: {}", e);
+                return Err(anyhow::anyhow!("Failed to find references: {}", e));
+            }
+        };
+
+        let mut references = Vec::new();
+
+        for search_result in references_result {
+            // Add the declaration (definition) if it exists
+            if let Some(declaration) = &search_result.declaration {
+                if let Ok(decl_line_index) = analysis.file_line_index(declaration.nav.file_id) {
+                    let decl_range = declaration.nav.focus_or_full_range();
+                    let start_line_col = decl_line_index.line_col(decl_range.start());
+                    let end_line_col = decl_line_index.line_col(decl_range.end());
+
+                    if self.vfs.exists(declaration.nav.file_id) {
+                        let vfs_path = self.vfs.file_path(declaration.nav.file_id);
+                        let decl_file_path = vfs_path.to_string();
+
+                        // Get the line content containing the declaration
+                        let content =
+                            if let Ok(file_text) = analysis.file_text(declaration.nav.file_id) {
+                                Self::get_line_content(&file_text, start_line_col.line as usize)
+                            } else {
+                                "".to_string()
+                            };
+
+                        references.push(ReferenceInfo {
+                            file_path: decl_file_path,
+                            line: start_line_col.line + 1,
+                            column: start_line_col.col + 1,
+                            end_line: end_line_col.line + 1,
+                            end_column: end_line_col.col + 1,
+                            name: declaration.nav.name.to_string(),
+                            content,
+                            is_definition: true,
+                        });
+                    }
+                }
+            }
+
+            // Process all references grouped by file
+            for (ref_file_id, ref_ranges) in search_result.references {
+                if let Ok(ref_line_index) = analysis.file_line_index(ref_file_id) {
+                    if self.vfs.exists(ref_file_id) {
+                        let vfs_path = self.vfs.file_path(ref_file_id);
+                        let ref_file_path = vfs_path.to_string();
+
+                        // Get file text once for this file
+                        if let Ok(file_text) = analysis.file_text(ref_file_id) {
+                            let symbol_name = search_result
+                                .declaration
+                                .as_ref()
+                                .map(|d| d.nav.name.to_string())
+                                .unwrap_or_else(|| "unknown".to_string());
+
+                            // Process each reference range in this file
+                            for (range, _category) in ref_ranges {
+                                let start_line_col = ref_line_index.line_col(range.start());
+                                let end_line_col = ref_line_index.line_col(range.end());
+
+                                let content = Self::get_line_content(
+                                    &file_text,
+                                    start_line_col.line as usize,
+                                );
+
+                                references.push(ReferenceInfo {
+                                    file_path: ref_file_path.clone(),
+                                    line: start_line_col.line + 1,
+                                    column: start_line_col.col + 1,
+                                    end_line: end_line_col.line + 1,
+                                    end_column: end_line_col.col + 1,
+                                    name: symbol_name.clone(),
+                                    content,
+                                    is_definition: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if references.is_empty() {
+            return Err(anyhow::anyhow!("No references or declarations found"));
+        }
+
+        // Sort references by file path, then by line number
+        references.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| a.line.cmp(&b.line))
+                .then_with(|| a.column.cmp(&b.column))
+        });
+        Ok(Some(references))
+    }
+
+    /// Helper method to get line content from file text
+    // TODO Return Option<String>
+    fn get_line_content(file_text: &str, line_number: usize) -> String {
+        let lines: Vec<&str> = file_text.lines().collect();
+        if line_number < lines.len() {
+            lines[line_number].to_string()
+        } else {
+            "".to_string()
+        }
     }
 
     /// Get rename information without applying changes to disk

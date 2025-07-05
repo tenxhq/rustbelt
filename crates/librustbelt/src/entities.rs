@@ -114,6 +114,27 @@ pub struct CompletionItem {
     pub deprecated: bool,
 }
 
+/// Information about a reference location
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceInfo {
+    /// Path to the file containing the reference
+    pub file_path: String,
+    /// Line number (1-based) where the reference starts
+    pub line: u32,
+    /// Column number (1-based) where the reference starts
+    pub column: u32,
+    /// Line number (1-based) where the reference ends
+    pub end_line: u32,
+    /// Column number (1-based) where the reference ends
+    pub end_column: u32,
+    /// Name of the referenced symbol
+    pub name: String,
+    /// Content of the reference (the line containing the reference)
+    pub content: String,
+    /// Whether this is a definition (true) or usage (false)
+    pub is_definition: bool,
+}
+
 impl std::fmt::Display for TypeHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -183,5 +204,20 @@ impl std::fmt::Display for CompletionItem {
             write!(f, " - {sig}")?;
         }
         Ok(())
+    }
+}
+
+impl std::fmt::Display for ReferenceInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ref_type = if self.is_definition { "def" } else { "ref" };
+        write!(
+            f,
+            "{}:{}:{} ({}) - {}",
+            self.file_path,
+            self.line,
+            self.column,
+            ref_type,
+            self.content.trim()
+        )
     }
 }

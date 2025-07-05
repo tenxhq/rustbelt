@@ -562,3 +562,166 @@ async fn test_view_inlay_hints_with_line_range() {
         "Should not contain people definition from outside small range"
     );
 }
+
+#[tokio::test]
+async fn test_find_references() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test finding references to the Person struct definition
+    let references = analyzer
+        .find_references(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 5, // Person struct definition
+            column: 12,
+        })
+        .await
+        .expect("Error finding references");
+
+    let references = references.expect("Should find references to Person struct");
+
+    println!("Found {} references to Person:", references.len());
+    for reference in &references {
+        println!("  - {}", reference);
+    }
+
+    // Should find at least 2 references (definition + at least one usage)
+    assert!(
+        references.len() >= 2,
+        "Should find at least the definition and one usage, found {}",
+        references.len()
+    );
+
+    // Should have exactly one definition
+    let definitions: Vec<_> = references.iter().filter(|r| r.is_definition).collect();
+    assert_eq!(definitions.len(), 1, "Should have exactly one definition");
+
+    let definition = definitions[0];
+    assert_eq!(
+        definition.name, "Person",
+        "Definition should be named 'Person'"
+    );
+    assert!(
+        definition.file_path.ends_with("main.rs"),
+        "Definition should be in main.rs"
+    );
+    assert_eq!(definition.line, 5, "Definition should be on line 5");
+    assert!(
+        definition.content.contains("struct Person"),
+        "Definition content should contain 'struct Person'"
+    );
+
+    // Should have some references (usages)
+    let usages: Vec<_> = references.iter().filter(|r| !r.is_definition).collect();
+    assert!(!usages.is_empty(), "Should have at least one usage");
+
+    // All references should have the same symbol name
+    assert!(
+        references.iter().all(|r| r.name == "Person"),
+        "All references should be named 'Person'"
+    );
+
+    // All references should have valid coordinates
+    for reference in &references {
+        assert!(
+            !reference.file_path.is_empty(),
+            "File path should not be empty"
+        );
+        assert!(reference.line > 0, "Line should be positive");
+        assert!(reference.column > 0, "Column should be positive");
+        assert!(
+            reference.end_line >= reference.line,
+            "End line should be >= start line"
+        );
+        assert!(
+            reference.end_line > reference.line || reference.end_column > reference.column,
+            "End position should be after start position"
+        );
+        assert!(
+            !reference.content.trim().is_empty(),
+            "Content should not be empty"
+        );
+    }
+
+    // References should be sorted by file path, then line, then column
+    let mut sorted_refs = references.clone();
+    sorted_refs.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.column.cmp(&b.column))
+    });
+    assert_eq!(references, sorted_refs, "References should be sorted");
+}
+
+#[tokio::test]
+async fn test_find_references_variable() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test finding references to a variable like 'people'
+    let references = analyzer
+        .find_references(&CursorCoordinates {
+            file_path: sample_path.to_str().unwrap().to_string(),
+            line: 31, // people variable declaration
+            column: 13,
+        })
+        .await
+        .expect("Error finding references");
+
+    let references = references.expect("Should find references to people variable");
+
+    println!("Found {} references to people variable:", references.len());
+    for reference in &references {
+        println!("  - {}", reference);
+    }
+
+    // Should find at least one reference (the declaration itself)
+    assert!(
+        !references.is_empty(),
+        "Should find at least the declaration"
+    );
+
+    // Variable references should have a specific symbol name
+    let symbol_name = &references[0].name;
+    assert!(
+        references.iter().all(|r| r.name == *symbol_name),
+        "All references should have the same symbol name '{}'",
+        symbol_name
+    );
+
+    // Check that all references have valid coordinates and content
+    for reference in &references {
+        assert!(
+            !reference.file_path.is_empty(),
+            "File path should not be empty"
+        );
+        assert!(reference.line > 0, "Line should be positive");
+        assert!(reference.column > 0, "Column should be positive");
+        assert!(
+            reference.end_line >= reference.line,
+            "End line should be >= start line"
+        );
+        assert!(
+            reference.end_line > reference.line || reference.end_column > reference.column,
+            "End position should be after start position"
+        );
+        assert!(
+            !reference.content.trim().is_empty(),
+            "Content should not be empty"
+        );
+        assert!(
+            reference.file_path.ends_with("main.rs"),
+            "References should be in main.rs"
+        );
+    }
+
+    // Should have at least one definition or usage that contains the variable name
+    assert!(
+        references.iter().any(|r| r.content.contains(symbol_name)),
+        "At least one reference should contain the symbol name '{}' in its content",
+        symbol_name
+    );
+}

@@ -54,6 +54,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("  type <file> <line> <col> - Get type hint at position");
     println!("  def <file> <line> <col>  - Get definition at position");
     println!("  comp <file> <line> <col> - Get completions at position");
+    println!("  refs <file> <line> <col> - Find references to symbol");
     println!("  hints <file>  - View file with inlay hints");
     println!("  rename <file> <line> <col> <new_name> - Rename symbol");
     println!("  quit/exit     - Exit the REPL");
@@ -89,6 +90,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                         println!("  type <file> <line> <col> - Get type hint at position");
                         println!("  def <file> <line> <col>  - Get definition at position");
                         println!("  comp <file> <line> <col> - Get completions at position");
+                        println!("  refs <file> <line> <col> - Find references to symbol");
                         println!("  hints <file>  - View file with inlay hints");
                         println!("  rename <file> <line> <col> <new_name> - Rename symbol");
                         println!("  quit/exit     - Exit the REPL");
@@ -231,6 +233,52 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             }
                             Err(e) => {
                                 println!("Error getting completions: {}", e);
+                            }
+                        }
+                    }
+                    "refs" => {
+                        if parts.len() != 4 {
+                            println!("Usage: refs <file> <line> <col>");
+                            continue;
+                        }
+
+                        let file_path = resolve_path(workspace_path, parts[1]);
+                        let line: u32 = match parts[2].parse() {
+                            Ok(l) => l,
+                            Err(_) => {
+                                println!("Invalid line number: {}", parts[2]);
+                                continue;
+                            }
+                        };
+                        let column: u32 = match parts[3].parse() {
+                            Ok(c) => c,
+                            Err(_) => {
+                                println!("Invalid column number: {}", parts[3]);
+                                continue;
+                            }
+                        };
+
+                        let cursor = CursorCoordinates {
+                            file_path: file_path.clone(),
+                            line,
+                            column,
+                        };
+
+                        match analyzer.find_references(&cursor).await {
+                            Ok(Some(references)) => {
+                                println!("Found {} reference(s):", references.len());
+                                for reference in references {
+                                    println!("  {}", reference);
+                                }
+                            }
+                            Ok(None) => {
+                                println!(
+                                    "No references found at {}:{}:{}",
+                                    file_path, line, column
+                                );
+                            }
+                            Err(e) => {
+                                println!("Error finding references: {}", e);
                             }
                         }
                     }

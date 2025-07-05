@@ -295,6 +295,41 @@ impl Rustbelt {
                 .is_error(true)),
         }
     }
+
+    /// Find all references to a symbol at a specific position in Rust code
+    ///
+    /// Searches for all references to a symbol (function, variable, type, etc.)
+    /// throughout the workspace, including both the definition and all usage sites.
+    /// Essential for understanding code dependencies and refactoring operations.
+    ///
+    /// Returns a list of reference locations with file paths, line numbers, and
+    /// contextual information, or indicates if no references are found.
+    #[tool]
+    async fn find_references(
+        &self,
+        _ctx: &ServerCtx,
+        cursor: CursorCoordinates,
+    ) -> Result<CallToolResult> {
+        match self.analyzer.lock().await.find_references(&cursor).await {
+            Ok(Some(references)) => {
+                let result_text = references
+                    .iter()
+                    .map(|ref_info| ref_info.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
+            }
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("No references found at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error finding references: {e}"))
+                .is_error(true)),
+        }
+    }
 }
 
 pub async fn serve_stdio() -> Result<()> {

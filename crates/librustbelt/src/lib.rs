@@ -7,5 +7,6 @@ pub mod entities;
 
 pub use analyzer::RustAnalyzerish;
 pub use entities::{
-    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, RenameResult, TextEdit, TypeHint,
+    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
+    TextEdit, TypeHint,
 };

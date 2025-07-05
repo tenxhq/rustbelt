@@ -39,7 +39,7 @@ rustbelt type-hint /path/to/file.rs 10 15
 | `get_definition`   | Alpha | Get definition for symbol at cursor position                                | `file_path`, `line`, `column` |
 | `rename_symbol`    | Alpha | Rename a symbol across the workspace                                        | `file_path`, `line`, `column`, `new_name` |
 | `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as types or parameter names     | `file_path` |
-
+| `find_references` | Alpha | Find all references to a symbol     | `file_path`, `line`, `column` |
 
 ## Planned Improvements
 
@@ -47,7 +47,6 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description                         | Parameters                    |
 |-----------|--------|-------------------------------------|-------------------------------|
-| `find_references` | Planned | Find all references to a symbol     | `file_path`, `line`, `column` |
 | `get_completions` | Planned | Get code completion suggestions     | `file_path`, `line`, `column` |
 | `get_signature_help` | Planned | Get function signature information  | `file_path`, `line`, `column` |
 | `get_document_symbols` | Planned | Get all symbols in a document       | `file_path`                   |
