@@ -30,7 +30,7 @@ use ra_ap_profile::StopWatch;
 use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
 use tokio::fs;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Main interface to rust-analyzer functionality
 #[derive(Debug)]
@@ -940,32 +940,49 @@ impl RustAnalyzerish {
 
     /// Ensure the project workspace is loaded for the given file path
     async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<Analysis> {
-        let project_root = self.find_project_root(file_path)?;
-
-        // Check if we already loaded a project
-        // TODO Support multiple projects
-        if self.current_project_root.is_some() {
-            if self.current_project_root.as_ref() == Some(&project_root) {
-                // Same project, just return the current analysis
-                return Ok(self.host.analysis());
-            } else {
-                error!(
-                    "Attempting to change workspaces, from {:?} to {:?}.",
-                    self.current_project_root, project_root
-                );
-                return Err(anyhow::anyhow!(
-                    "Cannot change workspaces after a project has already been loaded. Current: {:?}, New: {:?}",
-                    self.current_project_root,
-                    project_root
-                ));
+        // First check if we already have a workspace loaded
+        match &self.current_project_root {
+            Some(_root) => {
+                // Check if the file is already in our VFS (meaning rust-analyzer knows about it)
+                match Self::path_to_vfs_path(file_path) {
+                    Ok(vfs_path) => {
+                        if let Some((file_id, _)) = self.vfs.file_id(&vfs_path) {
+                            debug!(
+                                "File {} already in VFS as {:?}, using current analysis",
+                                file_path.display(),
+                                file_id
+                            );
+                            Ok(self.host.analysis())
+                        } else {
+                            // TODO Do we need to load file into the VFS??
+                            debug!(
+                                "File {} not found in VFS. It might be outside the workspace, if not, then we have an error and we should have loaded that file into the workspace",
+                                file_path.display()
+                            );
+                            Err(anyhow::anyhow!(
+                                "File {} not found in VFS",
+                                file_path.display()
+                            ))
+                        }
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Failed to convert path to VFS path: {}, checking workspace",
+                            e
+                        );
+                        Err(anyhow::anyhow!("Failed to convert path to VFS path: {}", e))
+                    }
+                }
+            }
+            None => {
+                // No workspace loaded yet, load it now
+                let project_root = self.find_project_root(file_path)?;
+                info!("Loading project workspace from: {}", project_root.display());
+                let analysis = self.load_workspace(&project_root).await?;
+                self.current_project_root = Some(project_root);
+                Ok(analysis)
             }
         }
-
-        info!("Loading project workspace from: {}", project_root.display());
-        let analysis = self.load_workspace(&project_root).await?;
-        self.current_project_root = Some(project_root);
-
-        Ok(analysis)
     }
 
     /// Find the project root by looking for Cargo.toml
@@ -1056,6 +1073,11 @@ impl RustAnalyzerish {
             elapsed.time.as_millis(),
             elapsed.memory.allocated.megabytes() as u64
         );
+
+        // Print all files in vfs
+        for (file_id, vfs_path) in self.vfs.iter() {
+            trace!("Loaded file in VFS: {:?} - {}", file_id, vfs_path);
+        }
 
         Ok(analysis)
     }
