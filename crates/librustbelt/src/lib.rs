@@ -4,6 +4,7 @@
 
 pub mod analyzer;
 pub mod entities;
+pub mod file_watcher;
 
 pub use analyzer::RustAnalyzerish;
 pub use entities::{

@@ -11,8 +11,8 @@ use super::entities::{
     CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
     TextEdit, TypeHint,
 };
-use anyhow::{Context, Result, bail};
-use crossbeam_channel::{Receiver, unbounded};
+use super::file_watcher::FileWatcher;
+use anyhow::{Context, Result};
 use ra_ap_hir::ClosureStyle;
 use ra_ap_ide::{
     AdjustmentHints, AdjustmentHintsMode, Analysis, AnalysisHost, CallableSnippets,
@@ -22,19 +22,13 @@ use ra_ap_ide::{
     InlayHintsConfig, LifetimeElisionHints, LineCol, LineIndex, MonikerResult, SubstTyLen,
     TextRange, TextSize,
 };
+use ra_ap_ide_db::imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
-use ra_ap_ide_db::{
-    ChangeWithProcMacros,
-    imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind},
-};
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_profile::StopWatch;
 use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
-use ra_ap_vfs::loader::{Handle, Message as LoaderMessage};
-use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
-use ra_ap_vfs_notify::NotifyHandle;
+use ra_ap_vfs::AbsPathBuf;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 use tokio::fs;
 use tracing::{debug, info, trace, warn};
@@ -67,11 +61,8 @@ use tracing::{debug, info, trace, warn};
 #[derive(Debug)]
 pub struct RustAnalyzerish {
     host: Arc<Mutex<AnalysisHost>>,
-    vfs: Arc<Mutex<Vfs>>,
     current_project_root: Option<PathBuf>,
-    vfs_receiver: Option<Receiver<LoaderMessage>>,
-    vfs_handle: Option<NotifyHandle>,
-    file_watcher_task: Option<JoinHandle<()>>,
+    file_watcher: FileWatcher,
 }
 
 impl Default for RustAnalyzerish {
@@ -85,11 +76,8 @@ impl RustAnalyzerish {
     pub fn new() -> Self {
         Self {
             host: Arc::new(Mutex::new(AnalysisHost::new(None))),
-            vfs: Arc::new(Mutex::new(Vfs::default())),
             current_project_root: None,
-            vfs_receiver: None,
-            vfs_handle: None,
-            file_watcher_task: None,
+            file_watcher: FileWatcher::new(),
         }
     }
 
@@ -182,15 +170,17 @@ impl RustAnalyzerish {
         })
     }
 
-    /// Get type hint information at the specified cursor position
-    pub async fn get_type_hint(&mut self, cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
+    /// Common setup for cursor-based operations
+    ///
+    /// Prepares analysis, loads file, validates cursor, and returns common data
+    async fn setup_cursor_analysis(
+        &mut self,
+        cursor: &CursorCoordinates,
+    ) -> Result<(Analysis, FileId, TextSize)> {
         let path = PathBuf::from(&cursor.file_path);
 
         // Ensure the project/workspace is loaded
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        // Load the file if not already loaded
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+        let (file_id, analysis) = self.ensure_project_loaded(&path).await?;
 
         // Get the file's line index for position conversion
         let line_index = analysis.file_line_index(file_id).map_err(|_| {
@@ -202,6 +192,18 @@ impl RustAnalyzerish {
 
         // Debug cursor position
         self.debug_cursor_position(cursor, file_id, offset, &analysis);
+
+        Ok((analysis, file_id, offset))
+    }
+
+    /// Create a FilePosition from file_id and offset
+    fn create_file_position(file_id: FileId, offset: TextSize) -> FilePosition {
+        FilePosition { file_id, offset }
+    }
+
+    /// Get type hint information at the specified cursor position
+    pub async fn get_type_hint(&mut self, cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
+        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
 
         // Create TextRange for the hover query - use a single point range
         let text_range = TextRange::new(offset, offset);
@@ -243,7 +245,7 @@ impl RustAnalyzerish {
             }
             Err(e) => {
                 warn!("Hover analysis failed: {:?}", e);
-                bail!("Hover analysis failed: {:?}", e)
+                return Err(anyhow::anyhow!("Hover analysis failed: {:?}", e));
             }
         };
 
@@ -285,28 +287,14 @@ impl RustAnalyzerish {
         &mut self,
         cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let path = PathBuf::from(&cursor.file_path);
-
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        let line_index = analysis
-            .file_line_index(file_id)
-            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-        // Validate and convert cursor coordinates
-        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
-
-        // Debug cursor position
-        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
 
         debug!(
             "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
             file_id, offset, cursor.line, cursor.column
         );
 
-        let position = FilePosition { file_id, offset };
+        let position = Self::create_file_position(file_id, offset);
 
         let config = CompletionConfig {
             enable_postfix_completions: true,
@@ -402,7 +390,7 @@ impl RustAnalyzerish {
             }
             Err(e) => {
                 warn!("Completion analysis failed: {:?}", e);
-                bail!("Completion analysis failed: {:?}", e)
+                Err(anyhow::anyhow!("Completion analysis failed: {:?}", e))
             }
         }
     }
@@ -412,24 +400,7 @@ impl RustAnalyzerish {
         &mut self,
         cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<DefinitionInfo>>> {
-        let path = PathBuf::from(&cursor.file_path);
-
-        // Ensure the project/workspace is loaded
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        // Load the file if not already loaded
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        // Get the file's line index for position conversion
-        let line_index = analysis
-            .file_line_index(file_id)
-            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-        // Validate and convert cursor coordinates
-        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
-
-        // Debug cursor position
-        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
 
         debug!(
             "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
@@ -441,7 +412,7 @@ impl RustAnalyzerish {
         // Happens when we query colum: 1 row: 1
         // TODO Report bug
         let goto_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            analysis.goto_definition(FilePosition { file_id, offset })
+            analysis.goto_definition(Self::create_file_position(file_id, offset))
         }));
 
         let definitions_result = match goto_result {
@@ -467,10 +438,8 @@ impl RustAnalyzerish {
                         let end_line_col = line_index.line_col(nav.focus_or_full_range().end());
 
                         let file_path = {
-                            let vfs = self.vfs.lock().await;
-                            if vfs.exists(nav.file_id) {
-                                let vfs_path = vfs.file_path(nav.file_id);
-                                vfs_path.to_string()
+                            if let Some(path) = self.file_watcher.file_path(nav.file_id).await {
+                                path
                             } else {
                                 return Err(anyhow::anyhow!(
                                     "File ID {:?} not found in VFS",
@@ -578,7 +547,7 @@ impl RustAnalyzerish {
             }
             Err(e) => {
                 warn!("Goto definition analysis failed: {:?}", e);
-                bail!("Goto definition analysis failed: {:?}", e)
+                Err(anyhow::anyhow!("Goto definition analysis failed: {:?}", e))
             }
         }
     }
@@ -606,24 +575,7 @@ impl RustAnalyzerish {
         &mut self,
         cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<ReferenceInfo>>> {
-        let path = PathBuf::from(&cursor.file_path);
-
-        // Ensure the project/workspace is loaded
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        // Load the file if not already loaded
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        // Get the file's line index for position conversion
-        let line_index = analysis
-            .file_line_index(file_id)
-            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-        // Validate and convert cursor coordinates
-        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
-
-        // Debug cursor position
-        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
 
         debug!(
             "Attempting find_all_refs query for file {:?} at offset {:?} (line {} col {})",
@@ -631,18 +583,18 @@ impl RustAnalyzerish {
         );
 
         // Query for all references
-        let references_result = match analysis.find_all_refs(FilePosition { file_id, offset }, None)
-        {
-            Ok(Some(search_results)) => search_results,
-            Ok(None) => {
-                debug!("No references found at position");
-                return Ok(None);
-            }
-            Err(e) => {
-                debug!("Error finding references: {}", e);
-                return Err(anyhow::anyhow!("Failed to find references: {}", e));
-            }
-        };
+        let references_result =
+            match analysis.find_all_refs(Self::create_file_position(file_id, offset), None) {
+                Ok(Some(search_results)) => search_results,
+                Ok(None) => {
+                    debug!("No references found at position");
+                    return Ok(None);
+                }
+                Err(e) => {
+                    debug!("Error finding references: {}", e);
+                    return Err(anyhow::anyhow!("Failed to find references: {}", e));
+                }
+            };
 
         let mut references = Vec::new();
 
@@ -654,11 +606,9 @@ impl RustAnalyzerish {
                     let start_line_col = decl_line_index.line_col(decl_range.start());
                     let end_line_col = decl_line_index.line_col(decl_range.end());
 
-                    let vfs = self.vfs.lock().await;
-                    if vfs.exists(declaration.nav.file_id) {
-                        let vfs_path = vfs.file_path(declaration.nav.file_id);
-                        let decl_file_path = vfs_path.to_string();
-
+                    if let Some(decl_file_path) =
+                        self.file_watcher.file_path(declaration.nav.file_id).await
+                    {
                         // Get the line content containing the declaration
                         let content =
                             if let Ok(file_text) = analysis.file_text(declaration.nav.file_id) {
@@ -684,11 +634,7 @@ impl RustAnalyzerish {
             // Process all references grouped by file
             for (ref_file_id, ref_ranges) in search_result.references {
                 if let Ok(ref_line_index) = analysis.file_line_index(ref_file_id) {
-                    let vfs = self.vfs.lock().await;
-                    if vfs.exists(ref_file_id) {
-                        let vfs_path = vfs.file_path(ref_file_id);
-                        let ref_file_path = vfs_path.to_string();
-
+                    if let Some(ref_file_path) = self.file_watcher.file_path(ref_file_id).await {
                         // Get file text once for this file
                         if let Ok(file_text) = analysis.file_text(ref_file_id) {
                             let symbol_name = search_result
@@ -755,31 +701,14 @@ impl RustAnalyzerish {
         cursor: &CursorCoordinates,
         new_name: &str,
     ) -> Result<Option<RenameResult>> {
-        let path = PathBuf::from(&cursor.file_path);
-
-        // Ensure the project/workspace is loaded
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        // Load the file if not already loaded
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
-
-        // Get the file's line index for position conversion
-        let line_index = analysis
-            .file_line_index(file_id)
-            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
-
-        // Validate and convert cursor coordinates
-        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
-
-        // Debug cursor position
-        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
 
         debug!(
             "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",
             file_id, offset, cursor.line, cursor.column, new_name
         );
 
-        let position = FilePosition { file_id, offset };
+        let position = Self::create_file_position(file_id, offset);
 
         // TODO Consider separating this to a separate tool
         // First, prepare the rename to validate it's possible
@@ -804,7 +733,7 @@ impl RustAnalyzerish {
             Ok(result) => result,
             Err(e) => {
                 warn!("Failed to perform rename: {:?}", e);
-                bail!("Failed to perform rename: {:?}", e)
+                return Err(anyhow::anyhow!("Failed to perform rename: {:?}", e));
             }
         };
 
@@ -822,10 +751,8 @@ impl RustAnalyzerish {
         for (file_id, edit_tuple) in source_change.source_file_edits {
             // Get file path from file_id
             let file_path = {
-                let vfs = self.vfs.lock().await;
-                if vfs.exists(file_id) {
-                    let vfs_path = vfs.file_path(file_id);
-                    vfs_path.to_string()
+                if let Some(path) = self.file_watcher.file_path(file_id).await {
+                    path
                 } else {
                     return Err(anyhow::anyhow!("File ID {:?} not found in VFS", file_id));
                 }
@@ -874,10 +801,7 @@ impl RustAnalyzerish {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
-        let analysis = self.ensure_project_loaded(&path).await?;
-
-        // Load the file if not already loaded
-        let file_id = self.load_file(&path).await.context("Failed to load file")?;
+        let (file_id, analysis) = self.ensure_project_loaded(&path).await?;
 
         // Get the file content
         let file_content = analysis
@@ -980,22 +904,23 @@ impl RustAnalyzerish {
     }
 
     /// Ensure the project workspace is loaded for the given file path
-    async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<Analysis> {
+    async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<(FileId, Analysis)> {
         // First check if we already have a workspace loaded
         match &self.current_project_root {
             Some(_root) => {
                 // Check if the file is already in our VFS (meaning rust-analyzer knows about it)
-                match Self::path_to_vfs_path(file_path) {
+                match FileWatcher::path_to_vfs_path(file_path) {
                     Ok(vfs_path) => {
-                        let vfs = self.vfs.lock().await;
-                        if let Some((file_id, _)) = vfs.file_id(&vfs_path) {
+                        let vfs = self.file_watcher.vfs();
+                        let vfs_guard = vfs.lock().await;
+                        if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
                             debug!(
                                 "File {} already in VFS as {:?}, using current analysis",
                                 file_path.display(),
                                 file_id
                             );
                             let host = self.host.lock().await;
-                            Ok(host.analysis())
+                            Ok((file_id, host.analysis()))
                         } else {
                             // TODO Do we need to load file into the VFS??
                             debug!(
@@ -1022,8 +947,9 @@ impl RustAnalyzerish {
                 let project_root = self.find_project_root(file_path)?;
                 info!("Loading project workspace from: {}", project_root.display());
                 let analysis = self.load_workspace(&project_root).await?;
+                let file_id = self.file_watcher.wait_for_file(file_path).await?;
                 self.current_project_root = Some(project_root);
-                Ok(analysis)
+                Ok((file_id, analysis))
             }
         }
     }
@@ -1091,10 +1017,9 @@ impl RustAnalyzerish {
             let mut host = self.host.lock().await;
             *host = AnalysisHost::with_database(db);
         }
-        {
-            let mut vfs_guard = self.vfs.lock().await;
-            *vfs_guard = vfs;
-        }
+
+        // Store the VFS in the file watcher
+        let vfs_arc = Arc::new(Mutex::new(vfs));
 
         let elapsed = stop_watch.elapsed();
         info!(
@@ -1131,87 +1056,28 @@ impl RustAnalyzerish {
 
         // Print all files in vfs
         {
-            let vfs = self.vfs.lock().await;
+            let vfs = vfs_arc.lock().await;
             for (file_id, vfs_path) in vfs.iter() {
                 trace!("Loaded file in VFS: {:?} - {}", file_id, vfs_path);
             }
         }
 
         // Set up file watching
-        self.setup_file_watching(abs_project_root).await?;
+        self.file_watcher
+            .setup_file_watching(abs_project_root.clone(), vfs_arc, Arc::clone(&self.host))
+            .await?;
 
         Ok(analysis)
     }
 
-    /// Load a file into the analysis host
-    async fn load_file(&mut self, path: &Path) -> Result<FileId> {
-        // Verify file exists on disk before proceeding
-        if !path.exists() {
-            return Err(anyhow::anyhow!("File does not exist: {}", path.display()));
-        }
-
-        // Convert path to VFS path
-        let vfs_path = Self::path_to_vfs_path(path)?;
-
-        debug!("Looking for file in VFS: {}", vfs_path);
-
-        // Check if file exists in VFS (should be loaded by load_workspace_at)
-        {
-            let vfs = self.vfs.lock().await;
-            if let Some((file_id, _)) = vfs.file_id(&vfs_path) {
-                debug!("Found file in VFS: {} -> {:?}", path.display(), file_id);
-                return Ok(file_id);
-            }
-        }
-
-        // If file is not in VFS, it might be outside the workspace
-        // Try to load it manually
-        debug!(
-            "File not found in VFS, trying to load manually: {}",
-            path.display()
-        );
-
-        let contents = tokio::fs::read_to_string(path)
-            .await
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-
-        // Add file to VFS
-        let file_id = {
-            let mut vfs = self.vfs.lock().await;
-            vfs.set_file_contents(vfs_path.clone(), Some(contents.bytes().collect()));
-
-            let (file_id, _) = vfs.file_id(&vfs_path).ok_or_else(|| {
-                anyhow::anyhow!("Failed to get file ID from VFS after manual loading")
-            })?;
-            file_id
-        };
-
-        // Update file contents in the analysis host
-        {
-            let mut host = self.host.lock().await;
-            let mut change = ChangeWithProcMacros::default();
-            change.change_file(file_id, Some(contents));
-            host.apply_change(change);
-        }
-
-        debug!("Loaded file manually: {} -> {:?}", path.display(), file_id);
-        Ok(file_id)
-    }
-
     /// Check if a file exists in the VFS
     pub async fn file_exists(&self, file_id: FileId) -> bool {
-        let vfs = self.vfs.lock().await;
-        vfs.exists(file_id)
+        self.file_watcher.file_exists(file_id).await
     }
 
     /// Get file path from file ID
     pub async fn file_path(&self, file_id: FileId) -> Option<String> {
-        let vfs = self.vfs.lock().await;
-        if vfs.exists(file_id) {
-            Some(vfs.file_path(file_id).to_string())
-        } else {
-            None
-        }
+        self.file_watcher.file_path(file_id).await
     }
 
     /// Apply rename edits to files on disk using rust-analyzer's
@@ -1293,175 +1159,5 @@ impl RustAnalyzerish {
             col: column.saturating_sub(1),
         };
         line_index.offset(line_col)
-    }
-
-    /// Convert a PathBuf to VfsPath for VFS operations
-    fn path_to_vfs_path(path: &Path) -> Result<VfsPath> {
-        let abs_path = AbsPathBuf::assert_utf8(
-            path.canonicalize()
-                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
-        );
-        Ok(abs_path.into())
-    }
-
-    /// Set up file watching for the workspace
-    pub async fn setup_file_watching(&mut self, abs_project_root: AbsPathBuf) -> Result<()> {
-        info!(
-            "Setting up file watching for workspace: {}",
-            abs_project_root
-        );
-
-        // Create a channel for VFS loader messages
-        let (sender, receiver) = unbounded::<LoaderMessage>();
-
-        // Start the file watcher using the same pattern as rust-analyzer
-        let vfs_handle: NotifyHandle = Handle::spawn(sender);
-
-        // Store the receiver and handle
-        self.vfs_receiver = Some(receiver);
-        self.vfs_handle = Some(vfs_handle);
-
-        // Spawn the background task to process file changes
-        let task_handle = self.spawn_file_watcher_task().await?;
-        self.file_watcher_task = Some(task_handle);
-
-        // Configure the VFS to watch the workspace files
-        self.configure_vfs_watching(abs_project_root).await?;
-
-        Ok(())
-    }
-
-    /// Spawn a background task to continuously process file changes
-    async fn spawn_file_watcher_task(&mut self) -> Result<JoinHandle<()>> {
-        let Some(ref receiver) = self.vfs_receiver else {
-            return Err(anyhow::anyhow!("VFS receiver not initialized"));
-        };
-
-        // Clone the receiver for the background task
-        let receiver_clone = receiver.clone();
-        let vfs_clone = Arc::clone(&self.vfs);
-        let host_clone = Arc::clone(&self.host);
-
-        let task_handle = tokio::spawn(async move {
-            Self::file_watcher_task_loop(receiver_clone, vfs_clone, host_clone).await;
-        });
-
-        Ok(task_handle)
-    }
-
-    /// Background task loop that continuously processes file changes
-    async fn file_watcher_task_loop(
-        receiver: Receiver<LoaderMessage>,
-        vfs: Arc<Mutex<Vfs>>,
-        host: Arc<Mutex<AnalysisHost>>,
-    ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
-
-        loop {
-            interval.tick().await;
-
-            let mut has_changes = false;
-            let mut change = ChangeWithProcMacros::default();
-
-            // Process all pending messages from the file watcher
-            while let Ok(message) = receiver.try_recv() {
-                match message {
-                    LoaderMessage::Progress {
-                        n_total, n_done, ..
-                    } => {
-                        trace!("File watching progress: {:?}/{:?}", n_done, n_total);
-                    }
-                    LoaderMessage::Loaded { files } => {
-                        debug!("Files initially loaded: {} files", files.len());
-                        has_changes = true;
-
-                        // Process the loaded files
-                        for (abs_path, contents) in files {
-                            debug!("File loaded: {:?}", abs_path);
-
-                            // Convert AbsPath to VfsPath and get FileId
-                            let vfs_path: VfsPath = abs_path.into();
-                            let vfs_guard = vfs.lock().await;
-                            if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
-                                // Convert contents to String for the analysis host
-                                let text_contents =
-                                    contents.and_then(|bytes| String::from_utf8(bytes).ok());
-
-                                // Add to the change for the analysis host
-                                change.change_file(file_id, text_contents);
-                            }
-                        }
-                    }
-                    LoaderMessage::Changed { files } => {
-                        debug!("Files changed: {} files", files.len());
-                        has_changes = true;
-
-                        // Process the changed files
-                        for (abs_path, contents) in files {
-                            debug!("File changed: {:?}", abs_path);
-
-                            // Convert AbsPath to VfsPath and get FileId
-                            let vfs_path: VfsPath = abs_path.into();
-                            {
-                                let mut vfs_guard = vfs.lock().await;
-                                if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
-                                    // Update VFS with new contents
-                                    vfs_guard.set_file_contents(vfs_path, contents.clone());
-
-                                    // Convert contents to String for the analysis host
-                                    let text_contents =
-                                        contents.and_then(|bytes| String::from_utf8(bytes).ok());
-
-                                    // Add to the change for the analysis host
-                                    change.change_file(file_id, text_contents);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Apply all changes to the analysis host if we have any
-            if has_changes {
-                let mut host_guard = host.lock().await;
-                host_guard.apply_change(change);
-                debug!("Applied file changes to analysis host");
-            }
-        }
-    }
-
-    /// Configure VFS to watch workspace files
-    async fn configure_vfs_watching(&mut self, abs_project_root: AbsPathBuf) -> Result<()> {
-        let Some(ref mut loader) = self.vfs_handle else {
-            return Ok(());
-        };
-
-        debug!("Configuring VFS watching for: {}", abs_project_root);
-
-        let config = ra_ap_vfs::loader::Config {
-            load: vec![
-                // Watch the entire project directory for changes
-                ra_ap_vfs::loader::Entry::Directories(ra_ap_vfs::loader::Directories {
-                    extensions: vec!["rs".to_string(), "toml".to_string()],
-                    include: vec![abs_project_root.clone()],
-                    exclude: vec![
-                        abs_project_root.join("target"),
-                        abs_project_root.join(".git"),
-                    ],
-                }),
-            ],
-            watch: vec![0], // Watch the first (and only) load entry
-            version: 0,
-        };
-
-        // Set the configuration on the loader
-        loader.set_config(config);
-
-        debug!("VFS watching configuration set");
-        // For now, we rely on the default file watching behavior
-        // In a more complete implementation, we would configure specific
-        // directories and file patterns to watch
-        debug!("VFS watching configured with default settings");
-        Ok(())
     }
 }
