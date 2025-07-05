@@ -44,8 +44,12 @@ async fn test_type_hint_simple_variable() {
 
     println!("Type info for 'people': {type_info}");
     assert!(
-        type_info.canonical_type.contains("HashMap")
-            || type_info.canonical_type.contains("std::collections")
+        type_info
+            .canonical_types
+            .contains(&"std::collections::hash::map::HashMap".to_string())
+            && type_info
+                .canonical_types
+                .contains(&"sample::Person".to_string())
     );
 }
 
@@ -70,8 +74,8 @@ async fn test_type_hint_function_call() {
     println!("Type info for function result: {type_info}");
     assert!(
         type_info
-            .canonical_type
-            .contains("pub fn insert(&mut self, k: K, v: V) -> Option<V>")
+            .canonical_types
+            .contains(&"std::collections::hash::map::HashMap".to_string())
     );
 }
 
@@ -94,9 +98,15 @@ async fn test_type_hint_complex_generic() {
     if let Some(type_info) = result {
         println!("Type info for complex generic: {type_info}");
         assert!(
-            type_info.canonical_type.contains("Vec")
-                && (type_info.canonical_type.contains("Option")
-                    || type_info.canonical_type.contains("Result"))
+            type_info
+                .canonical_types
+                .contains(&"alloc::vec::Vec".to_string())
+                && (type_info
+                    .canonical_types
+                    .contains(&"core::option::Option".to_string())
+                    && type_info
+                        .canonical_types
+                        .contains(&"core::result::Result".to_string()))
         );
     } else {
         // Complex generics might not always have hover info available
@@ -359,13 +369,16 @@ async fn test_type_hint_variable_with_name() {
         type_info.symbol.contains("numbers"),
         "Should contain variable name 'numbers'"
     );
-    // TODO Why is Vec<i32> not showing up?
     assert!(
-        type_info.canonical_type.contains("Vec<i32>"),
-        "Should contain type Vec<i32>"
+        type_info
+            .canonical_types
+            .contains(&"alloc::vec::Vec".to_string()),
+        "Should contain type Vec"
     );
-    // TODO This would be nice, but it doesn't show up in the type info
-    // assert!(type_info.contains("let"), "Should contain 'let' keyword");
+    assert!(
+        type_info.symbol.contains("let"),
+        "Should contain 'let' keyword"
+    );
 }
 
 #[tokio::test]

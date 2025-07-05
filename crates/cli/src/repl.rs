@@ -123,7 +123,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
 
                         match analyzer.get_type_hint(&cursor).await {
                             Ok(Some(type_info)) => {
-                                println!("Type: {}", type_info);
+                                println!("Type Hint:\n-----\n{}\n------", type_info);
                             }
                             Ok(None) => {
                                 println!(

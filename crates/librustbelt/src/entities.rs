@@ -88,8 +88,7 @@ pub struct TypeHint {
     /// Column number (1-based) where the edit starts
     pub column: u32,
     pub symbol: String,
-    pub short_type: String,
-    pub canonical_type: String,
+    pub canonical_types: Vec<String>,
 }
 
 /// A completion item for a given cursor position
@@ -117,7 +116,15 @@ pub struct CompletionItem {
 
 impl std::fmt::Display for TypeHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.symbol, self.short_type)
+        write!(
+            f,
+            "{}:{}:{}\n```md\n{}\n```\nRelevant types: {}",
+            self.file_path,
+            self.line,
+            self.column,
+            self.symbol,
+            self.canonical_types.join(", ")
+        )
     }
 }
 

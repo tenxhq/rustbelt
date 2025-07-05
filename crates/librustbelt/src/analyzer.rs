@@ -179,7 +179,7 @@ impl RustAnalyzerish {
             max_fields_count: Some(10),
             max_enum_variants_count: Some(10),
             max_subst_ty_len: SubstTyLen::Unlimited,
-            show_drop_glue: true,
+            show_drop_glue: false,
         };
 
         debug!(
@@ -209,46 +209,34 @@ impl RustAnalyzerish {
             }
         };
 
+        trace!(
+            "Hover result for {}:{}:{}: {:?}",
+            cursor.file_path, cursor.line, cursor.column, hover_result
+        );
         // Get the type information from hover
-        let type_info = hover_result.info.markup.as_str();
-
-        // Try to get the symbol name using goto_definition
-        let symbol_name = match analysis.goto_definition(FilePosition { file_id, offset }) {
-            Ok(Some(range_info)) => {
-                // Look for a local definition that represents the variable
-                if let Some(nav) = range_info.info.first() {
-                    // Check if this is a local variable by looking at the definition location
-                    if nav.file_id == file_id {
-                        Some(nav.name.to_string())
-                    } else {
-                        None
+        let mut canonical_types: Vec<String> = Vec::new();
+        for action in hover_result.info.actions {
+            match action {
+                ra_ap_ide::HoverAction::GoToType(type_actions) => {
+                    for type_action in type_actions {
+                        canonical_types.push(type_action.mod_path);
                     }
-                } else {
-                    None
                 }
+                _ => debug!("Unhandled hover action: {:?}", action),
             }
-            _ => None,
-        };
-
-        // Combine symbol name with type information
-        let result = if let Some(ref name) = symbol_name {
-            format!("{name}: {type_info}")
-        } else {
-            type_info.to_string()
-        };
+        }
 
         debug!(
-            "Got type hint for {}:{}:{}: {}",
-            cursor.file_path, cursor.line, cursor.column, result
+            "Got type hint for {}:{}:{}",
+            cursor.file_path, cursor.line, cursor.column
         );
 
         let type_hint = TypeHint {
             file_path: cursor.file_path.clone(),
             line: cursor.line,
             column: cursor.column,
-            symbol: symbol_name.unwrap_or_else(|| "unknown".to_string()),
-            short_type: type_info.to_string(),
-            canonical_type: type_info.to_string(),
+            symbol: hover_result.info.markup.to_string(),
+            canonical_types,
         };
 
         Ok(Some(type_hint))
