@@ -5,7 +5,6 @@
 //! information.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use super::entities::{
     CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
@@ -28,7 +27,6 @@ use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at
 use ra_ap_profile::StopWatch;
 use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
 use ra_ap_vfs::AbsPathBuf;
-use tokio::sync::Mutex;
 
 use tokio::fs;
 use tracing::{debug, info, trace, warn};
@@ -60,7 +58,7 @@ use tracing::{debug, info, trace, warn};
 /// ```
 #[derive(Debug)]
 pub struct RustAnalyzerish {
-    host: Arc<Mutex<AnalysisHost>>,
+    host: AnalysisHost,
     current_project_root: Option<PathBuf>,
     file_watcher: FileWatcher,
 }
@@ -75,7 +73,7 @@ impl RustAnalyzerish {
     /// Create a new RustAnalyzer instance
     pub fn new() -> Self {
         Self {
-            host: Arc::new(Mutex::new(AnalysisHost::new(None))),
+            host: AnalysisHost::new(None),
             current_project_root: None,
             file_watcher: FileWatcher::new(),
         }
@@ -180,7 +178,7 @@ impl RustAnalyzerish {
         let path = PathBuf::from(&cursor.file_path);
 
         // Ensure the project/workspace is loaded
-        let (file_id, analysis) = self.ensure_project_loaded(&path).await?;
+        let (file_id, analysis) = self.ensure_project_loaded(&path)?;
 
         // Get the file's line index for position conversion
         let line_index = analysis.file_line_index(file_id).map_err(|_| {
@@ -438,7 +436,7 @@ impl RustAnalyzerish {
                         let end_line_col = line_index.line_col(nav.focus_or_full_range().end());
 
                         let file_path = {
-                            if let Some(path) = self.file_watcher.file_path(nav.file_id).await {
+                            if let Some(path) = self.file_watcher.file_path(nav.file_id) {
                                 path
                             } else {
                                 return Err(anyhow::anyhow!(
@@ -607,7 +605,7 @@ impl RustAnalyzerish {
                     let end_line_col = decl_line_index.line_col(decl_range.end());
 
                     if let Some(decl_file_path) =
-                        self.file_watcher.file_path(declaration.nav.file_id).await
+                        self.file_watcher.file_path(declaration.nav.file_id)
                     {
                         // Get the line content containing the declaration
                         let content =
@@ -634,7 +632,7 @@ impl RustAnalyzerish {
             // Process all references grouped by file
             for (ref_file_id, ref_ranges) in search_result.references {
                 if let Ok(ref_line_index) = analysis.file_line_index(ref_file_id) {
-                    if let Some(ref_file_path) = self.file_watcher.file_path(ref_file_id).await {
+                    if let Some(ref_file_path) = self.file_watcher.file_path(ref_file_id) {
                         // Get file text once for this file
                         if let Ok(file_text) = analysis.file_text(ref_file_id) {
                             let symbol_name = search_result
@@ -751,7 +749,7 @@ impl RustAnalyzerish {
         for (file_id, edit_tuple) in source_change.source_file_edits {
             // Get file path from file_id
             let file_path = {
-                if let Some(path) = self.file_watcher.file_path(file_id).await {
+                if let Some(path) = self.file_watcher.file_path(file_id) {
                     path
                 } else {
                     return Err(anyhow::anyhow!("File ID {:?} not found in VFS", file_id));
@@ -801,7 +799,7 @@ impl RustAnalyzerish {
         let path = PathBuf::from(file_path);
 
         // Ensure the project/workspace is loaded
-        let (file_id, analysis) = self.ensure_project_loaded(&path).await?;
+        let (file_id, analysis) = self.ensure_project_loaded(&path)?;
 
         // Get the file content
         let file_content = analysis
@@ -904,7 +902,7 @@ impl RustAnalyzerish {
     }
 
     /// Ensure the project workspace is loaded for the given file path
-    async fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<(FileId, Analysis)> {
+    fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<(FileId, Analysis)> {
         // First check if we already have a workspace loaded
         match &self.current_project_root {
             Some(_root) => {
@@ -912,15 +910,14 @@ impl RustAnalyzerish {
                 match FileWatcher::path_to_vfs_path(file_path) {
                     Ok(vfs_path) => {
                         let vfs = self.file_watcher.vfs();
-                        let vfs_guard = vfs.lock().await;
-                        if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
+                        if let Some((file_id, _)) = vfs.file_id(&vfs_path) {
                             debug!(
                                 "File {} already in VFS as {:?}, using current analysis",
                                 file_path.display(),
                                 file_id
                             );
-                            let host = self.host.lock().await;
-                            Ok((file_id, host.analysis()))
+                            self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+                            Ok((file_id, self.host.analysis()))
                         } else {
                             // TODO Do we need to load file into the VFS??
                             debug!(
@@ -946,8 +943,9 @@ impl RustAnalyzerish {
                 // No workspace loaded yet, load it now
                 let project_root = self.find_project_root(file_path)?;
                 info!("Loading project workspace from: {}", project_root.display());
-                let analysis = self.load_workspace(&project_root).await?;
-                let file_id = self.file_watcher.wait_for_file(file_path).await?;
+                let analysis = self.load_workspace(&project_root)?;
+                self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+                let file_id = self.file_watcher.get_file_id(file_path)?;
                 self.current_project_root = Some(project_root);
                 Ok((file_id, analysis))
             }
@@ -980,7 +978,7 @@ impl RustAnalyzerish {
     }
 
     /// Load workspace using load_workspace_at approach
-    async fn load_workspace(&mut self, project_root: &Path) -> Result<Analysis> {
+    fn load_workspace(&mut self, project_root: &Path) -> Result<Analysis> {
         let abs_project_root =
             AbsPathBuf::assert_utf8(project_root.canonicalize().with_context(|| {
                 format!(
@@ -1013,13 +1011,7 @@ impl RustAnalyzerish {
             })?;
 
         // Update our state with the loaded workspace
-        {
-            let mut host = self.host.lock().await;
-            *host = AnalysisHost::with_database(db);
-        }
-
-        // Store the VFS in the file watcher
-        let vfs_arc = Arc::new(Mutex::new(vfs));
+        self.host = AnalysisHost::with_database(db);
 
         let elapsed = stop_watch.elapsed();
         info!(
@@ -1028,23 +1020,21 @@ impl RustAnalyzerish {
             elapsed.memory.allocated.megabytes() as u64
         );
 
-        let analysis = {
-            let host = self.host.lock().await;
-            host.analysis()
-        };
+        let analysis = self.host.analysis();
+
+        // Set up file watching
+        self.file_watcher
+            .setup_file_watching(abs_project_root.clone(), vfs, &mut self.host)?;
 
         // Prime caches with all available cores for better performance
         let threads = num_cpus::get_physical();
-        {
-            let host = self.host.lock().await;
-            ra_ap_ide_db::prime_caches::parallel_prime_caches(
-                host.raw_database(),
-                threads,
-                &|progress| {
-                    trace!("Cache priming progress: {:?}", progress);
-                },
-            );
-        }
+        ra_ap_ide_db::prime_caches::parallel_prime_caches(
+            self.host.raw_database(),
+            threads,
+            &|progress| {
+                trace!("Cache priming progress: {:?}", progress);
+            },
+        );
 
         let elapsed = stop_watch.elapsed();
         info!(
@@ -1055,29 +1045,11 @@ impl RustAnalyzerish {
         );
 
         // Print all files in vfs
-        {
-            let vfs = vfs_arc.lock().await;
-            for (file_id, vfs_path) in vfs.iter() {
-                trace!("Loaded file in VFS: {:?} - {}", file_id, vfs_path);
-            }
+        for (file_id, vfs_path) in self.file_watcher.vfs().iter() {
+            trace!("Loaded file in VFS: {:?} - {}", file_id, vfs_path);
         }
 
-        // Set up file watching
-        self.file_watcher
-            .setup_file_watching(abs_project_root.clone(), vfs_arc, Arc::clone(&self.host))
-            .await?;
-
         Ok(analysis)
-    }
-
-    /// Check if a file exists in the VFS
-    pub async fn file_exists(&self, file_id: FileId) -> bool {
-        self.file_watcher.file_exists(file_id).await
-    }
-
-    /// Get file path from file ID
-    pub async fn file_path(&self, file_id: FileId) -> Option<String> {
-        self.file_watcher.file_path(file_id).await
     }
 
     /// Apply rename edits to files on disk using rust-analyzer's

@@ -7,22 +7,18 @@ use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, unbounded};
 use ra_ap_ide::{AnalysisHost, FileId};
 use ra_ap_ide_db::ChangeWithProcMacros;
-use ra_ap_vfs::loader::{Handle, Message as LoaderMessage};
+use ra_ap_vfs::loader::{Handle, Message};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
 use ra_ap_vfs_notify::NotifyHandle;
 use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, trace};
 
 /// File watching configuration and state
 #[derive(Debug)]
 pub struct FileWatcher {
-    vfs_receiver: Option<Receiver<LoaderMessage>>,
+    vfs_receiver: Option<Receiver<Message>>,
     vfs_handle: Option<NotifyHandle>,
-    file_watcher_task: Option<JoinHandle<()>>,
-    vfs: Arc<Mutex<Vfs>>,
+    vfs: Vfs,
 }
 
 impl Default for FileWatcher {
@@ -37,17 +33,16 @@ impl FileWatcher {
         Self {
             vfs_receiver: None,
             vfs_handle: None,
-            file_watcher_task: None,
-            vfs: Arc::new(Mutex::new(Vfs::default())),
+            vfs: Vfs::default(),
         }
     }
 
     /// Set up file watching for the workspace
-    pub async fn setup_file_watching(
+    pub fn setup_file_watching(
         &mut self,
         abs_project_root: AbsPathBuf,
-        vfs: Arc<Mutex<Vfs>>,
-        host: Arc<Mutex<AnalysisHost>>,
+        vfs: Vfs,
+        _host: &mut AnalysisHost,
     ) -> Result<()> {
         tracing::info!(
             "Setting up file watching for workspace: {}",
@@ -58,7 +53,7 @@ impl FileWatcher {
         self.vfs = vfs;
 
         // Create a channel for VFS loader messages
-        let (sender, receiver) = unbounded::<LoaderMessage>();
+        let (sender, receiver) = unbounded::<Message>();
 
         // Start the file watcher using the same pattern as rust-analyzer
         let vfs_handle: NotifyHandle = Handle::spawn(sender);
@@ -68,115 +63,65 @@ impl FileWatcher {
         self.vfs_handle = Some(vfs_handle);
 
         // Configure the VFS to watch the workspace files
-        self.configure_vfs_watching(abs_project_root).await?;
-
-        // Spawn the file watcher task to process changes
-        self.spawn_file_watcher_task(host).await?;
+        self.configure_vfs_watching(abs_project_root)?;
 
         Ok(())
     }
 
-    /// Spawn a background task to continuously process file changes
-    pub async fn spawn_file_watcher_task(&mut self, host: Arc<Mutex<AnalysisHost>>) -> Result<()> {
+    /// Drain all pending messages from the file watcher and apply changes synchronously
+    pub fn drain_and_apply_changes(&mut self, host: &mut AnalysisHost) -> Result<()> {
         let Some(ref receiver) = self.vfs_receiver else {
             return Err(anyhow::anyhow!("VFS receiver not initialized"));
         };
 
-        // Clone the receiver for the background task
-        let receiver_clone = receiver.clone();
-        let vfs_clone = self.vfs();
+        // Process all pending messages from the file watcher
+        while let Ok(message) = receiver.try_recv() {
+            match message {
+                Message::Progress {
+                    n_total, n_done, ..
+                } => {
+                    trace!("File watching progress: {:?}/{:?}", n_done, n_total);
+                }
+                Message::Loaded { files } | Message::Changed { files } => {
+                    debug!("Files changed: {} files", files.len());
 
-        let task_handle = tokio::spawn(async move {
-            Self::file_watcher_task_loop(receiver_clone, vfs_clone, host).await;
-        });
-
-        self.file_watcher_task = Some(task_handle);
-        Ok(())
-    }
-
-    /// Background task loop that continuously processes file changes
-    async fn file_watcher_task_loop(
-        receiver: Receiver<LoaderMessage>,
-        vfs: Arc<Mutex<Vfs>>,
-        host: Arc<Mutex<AnalysisHost>>,
-    ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
-
-        loop {
-            interval.tick().await;
-
-            let mut has_changes = false;
-            let mut change = ChangeWithProcMacros::default();
-
-            // Process all pending messages from the file watcher
-            while let Ok(message) = receiver.try_recv() {
-                match message {
-                    LoaderMessage::Progress {
-                        n_total, n_done, ..
-                    } => {
-                        trace!("File watching progress: {:?}/{:?}", n_done, n_total);
-                    }
-                    LoaderMessage::Loaded { files } => {
-                        debug!("Files initially loaded: {} files", files.len());
-                        has_changes = true;
-
-                        // Process the loaded files
-                        for (abs_path, contents) in files {
-                            debug!("File loaded: {:?}", abs_path);
-
-                            // Convert AbsPath to VfsPath and get FileId
-                            let vfs_path: VfsPath = abs_path.into();
-                            let vfs_guard = vfs.lock().await;
-                            if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
-                                // Convert contents to String for the analysis host
-                                let text_contents =
-                                    contents.and_then(|bytes| String::from_utf8(bytes).ok());
-
-                                // Add to the change for the analysis host
-                                change.change_file(file_id, text_contents);
-                            }
-                        }
-                    }
-                    LoaderMessage::Changed { files } => {
-                        debug!("Files changed: {} files", files.len());
-                        has_changes = true;
-
-                        // Process the changed files
-                        for (abs_path, contents) in files {
-                            debug!("File changed: {:?}", abs_path);
-
-                            // Convert AbsPath to VfsPath and get FileId
-                            let vfs_path: VfsPath = abs_path.into();
-                            {
-                                let mut vfs_guard = vfs.lock().await;
-                                if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
-                                    // Update VFS with new contents
-                                    vfs_guard.set_file_contents(vfs_path, contents.clone());
-
-                                    // Convert contents to String for the analysis host
-                                    let text_contents =
-                                        contents.and_then(|bytes| String::from_utf8(bytes).ok());
-
-                                    // Add to the change for the analysis host
-                                    change.change_file(file_id, text_contents);
-                                }
-                            }
-                        }
+                    // Process the loaded files
+                    for (abs_path, contents) in files {
+                        debug!("File changed: {:?}", abs_path);
+                        let vfs_path: VfsPath = abs_path.to_path_buf().into();
+                        self.vfs.set_file_contents(vfs_path, contents.clone());
                     }
                 }
             }
-
-            // Apply all changes to the analysis host if we have any
-            if has_changes {
-                let mut host_guard = host.lock().await;
-                host_guard.apply_change(change);
-                debug!("Applied file changes to analysis host");
-            }
         }
+
+        // Apply all VFS changes to the analysis host
+        let changed_files = self.vfs.take_changes();
+        if changed_files.is_empty() {
+            return Ok(());
+        }
+        let mut change = ChangeWithProcMacros::default();
+        for (file_id, changed_file) in changed_files {
+            let new_contents = match changed_file.change {
+                ra_ap_vfs::Change::Create(v, _) | ra_ap_vfs::Change::Modify(v, _) => {
+                    if let Ok(text) = std::str::from_utf8(&v) {
+                        Some(text.to_owned())
+                    } else {
+                        None
+                    }
+                }
+                ra_ap_vfs::Change::Delete => None,
+            };
+            change.change_file(file_id, new_contents);
+        }
+
+        host.apply_change(change);
+
+        Ok(())
     }
 
     /// Configure VFS to watch workspace files
-    async fn configure_vfs_watching(&mut self, abs_project_root: AbsPathBuf) -> Result<()> {
+    fn configure_vfs_watching(&mut self, abs_project_root: AbsPathBuf) -> Result<()> {
         let Some(ref mut loader) = self.vfs_handle else {
             return Ok(());
         };
@@ -206,60 +151,38 @@ impl FileWatcher {
         Ok(())
     }
 
-    pub async fn wait_for_file(&self, path: &Path) -> Result<FileId> {
+    pub fn get_file_id(&self, path: &Path) -> Result<FileId> {
         let vfs_path = Self::path_to_vfs_path(path)?;
-
-        // Wait for the file to be loaded into the VFS
-        let max_attempts = 100; // Wait up to 10 seconds (100 * 100ms)
-        let mut attempts = 0;
-
-        loop {
-            {
-                let vfs_guard = self.vfs.lock().await;
-                if let Some((file_id, _)) = vfs_guard.file_id(&vfs_path) {
-                    info!("File {} loaded into VFS as {:?}", path.display(), file_id);
-                    return Ok(file_id);
-                }
-            }
-
-            attempts += 1;
-            if attempts >= max_attempts {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for file to be loaded into VFS: {:?}",
-                    path
-                ));
-            }
-
+        if let Some((file_id, _)) = self.vfs.file_id(&vfs_path) {
             debug!(
-                "Waiting for file to be loaded into VFS: {} (attempt {}/{})",
+                "File found in VFS: {} with FileId: {:?}",
                 path.display(),
-                attempts,
-                max_attempts
+                file_id
             );
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            Ok(file_id)
+        } else {
+            error!("File not found in VFS: {}", path.display());
+            Err(anyhow::anyhow!("File not found in VFS: {}", path.display()))
         }
     }
 
     /// Check if a file exists in the VFS
-    pub async fn file_exists(&self, file_id: FileId) -> bool {
-        let vfs = self.vfs.lock().await;
-        vfs.exists(file_id)
+    pub fn file_exists(&self, file_id: FileId) -> bool {
+        self.vfs.exists(file_id)
     }
 
     /// Get file path from file ID
-    pub async fn file_path(&self, file_id: FileId) -> Option<String> {
-        let vfs = self.vfs.lock().await;
-        if vfs.exists(file_id) {
-            Some(vfs.file_path(file_id).to_string())
+    pub fn file_path(&self, file_id: FileId) -> Option<String> {
+        if self.vfs.exists(file_id) {
+            Some(self.vfs.file_path(file_id).to_string())
         } else {
             None
         }
     }
 
     /// Get a reference to the VFS
-    pub fn vfs(&self) -> Arc<Mutex<Vfs>> {
-        Arc::clone(&self.vfs)
+    pub fn vfs(&self) -> &Vfs {
+        &self.vfs
     }
 
     /// Convert a PathBuf to VfsPath for VFS operations
@@ -269,13 +192,5 @@ impl FileWatcher {
                 .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
         );
         Ok(abs_path.into())
-    }
-}
-
-impl Drop for FileWatcher {
-    fn drop(&mut self) {
-        if let Some(task) = self.file_watcher_task.take() {
-            task.abort();
-        }
     }
 }
