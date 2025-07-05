@@ -4,7 +4,7 @@
 //! functionality and standalone CLI tools.
 
 use clap::{Parser, Subcommand};
-use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
+use librustbelt::{builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use rustbelt_server::VERSION;
 
 mod repl;
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
 
             let cursor = CursorCoordinates {
                 file_path: file_path.clone(),
@@ -141,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
 
             let cursor = CursorCoordinates {
                 file_path: file_path.clone(),
@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
 
             let cursor = CursorCoordinates {
                 file_path: file_path.clone(),
@@ -215,7 +215,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
 
             let cursor = CursorCoordinates {
                 file_path: file_path.clone(),
@@ -251,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerish::new();
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
 
             match analyzer.view_inlay_hints(&file_path, None, None).await {
                 Ok(annotated_content) => {

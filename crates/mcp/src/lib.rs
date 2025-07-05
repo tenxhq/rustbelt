@@ -5,8 +5,9 @@
 //! go-to-definition, and more as MCP tools.
 
 use libruskel::Ruskel;
-use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
+use librustbelt::{RustAnalyzerish, builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tenx_mcp::{Result, ServerCtx, mcp_server, schema::*, schemars, tool};
 use tokio::sync::Mutex;
@@ -68,16 +69,31 @@ pub struct ViewInlayHintsParams {
 }
 
 /// Rust-Analyzer MCP server connection
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Rustbelt {
-    analyzer: Arc<Mutex<RustAnalyzerish>>,
+    analyzer: Arc<Mutex<Option<RustAnalyzerish>>>,
 }
 
 impl Rustbelt {
     fn new() -> Self {
         Self {
-            analyzer: Arc::new(Mutex::new(RustAnalyzerish::new())),
+            analyzer: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Initialize the analyzer if it hasn't been created yet
+    async fn ensure_analyzer<P: AsRef<Path>>(&self, file_path: P) -> Result<()> {
+        let mut analyzer_guard = self.analyzer.lock().await;
+        if analyzer_guard.is_none() {
+            // Create a default analyzer for the current folder
+            let analyzer = RustAnalyzerishBuilder::from_file(file_path)
+                .expect("Failed to find root workspace from given file")
+                .build()
+                .expect("Failed to create analyzer with current directory");
+
+            *analyzer_guard = Some(analyzer);
+        }
+        Ok(())
     }
 }
 
@@ -141,7 +157,16 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self.analyzer.lock().await.get_type_hint(&cursor).await {
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .get_type_hint(&cursor)
+            .await
+        {
             Ok(Some(type_info)) => Ok(CallToolResult::new()
                 .with_text_content(type_info.to_string())
                 .is_error(false)),
@@ -167,7 +192,16 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self.analyzer.lock().await.get_definition(&cursor).await {
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .get_definition(&cursor)
+            .await
+        {
             Ok(Some(definitions)) => {
                 let result_text = definitions
                     .iter()
@@ -200,7 +234,16 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self.analyzer.lock().await.get_completions(&cursor).await {
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .get_completions(&cursor)
+            .await
+        {
             Ok(Some(completions)) => {
                 let result_text = completions
                     .iter()
@@ -240,10 +283,13 @@ impl Rustbelt {
             line: params.line,
             column: params.column,
         };
+        self.ensure_analyzer(&cursor.file_path).await?;
         match self
             .analyzer
             .lock()
             .await
+            .as_mut()
+            .unwrap()
             .rename_symbol(&cursor, &params.new_name)
             .await
         {
@@ -280,10 +326,13 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         params: ViewInlayHintsParams,
     ) -> Result<CallToolResult> {
+        self.ensure_analyzer(&params.file_path).await?;
         match self
             .analyzer
             .lock()
             .await
+            .as_mut()
+            .unwrap()
             .view_inlay_hints(&params.file_path, params.start_line, params.end_line)
             .await
         {
@@ -310,7 +359,16 @@ impl Rustbelt {
         _ctx: &ServerCtx,
         cursor: CursorCoordinates,
     ) -> Result<CallToolResult> {
-        match self.analyzer.lock().await.find_references(&cursor).await {
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .find_references(&cursor)
+            .await
+        {
             Ok(Some(references)) => {
                 let result_text = references
                     .iter()

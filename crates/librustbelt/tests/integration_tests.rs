@@ -3,7 +3,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use librustbelt::{analyzer::RustAnalyzerish, entities::CursorCoordinates};
+use librustbelt::{
+    analyzer::RustAnalyzerish, builder::RustAnalyzerishBuilder, entities::CursorCoordinates,
+};
 use ra_ap_ide::SymbolKind;
 use tokio::sync::Mutex;
 
@@ -13,7 +15,14 @@ static SHARED_ANALYZER: OnceLock<Arc<Mutex<RustAnalyzerish>>> = OnceLock::new();
 /// Get or initialize the shared analyzer instance
 async fn get_shared_analyzer() -> Arc<Mutex<RustAnalyzerish>> {
     SHARED_ANALYZER
-        .get_or_init(|| Arc::new(Mutex::new(RustAnalyzerish::new())))
+        .get_or_init(|| {
+            let sample_path = get_sample_file_path();
+            let analyzer = RustAnalyzerishBuilder::from_file(&sample_path)
+                .expect("Failed to create analyzer from sample file")
+                .build()
+                .expect("Failed to build analyzer");
+            Arc::new(Mutex::new(analyzer))
+        })
         .clone()
 }
 

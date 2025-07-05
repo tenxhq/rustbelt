@@ -4,14 +4,15 @@
 //! making it easy to get type hints, definitions, and other semantic
 //! information.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::entities::{
     CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
     TextEdit, TypeHint,
 };
 use super::file_watcher::FileWatcher;
-use anyhow::{Context, Result};
+use super::utils::RustAnalyzerUtils;
+use anyhow::Result;
 use ra_ap_hir::ClosureStyle;
 use ra_ap_ide::{
     AdjustmentHints, AdjustmentHintsMode, Analysis, AnalysisHost, CallableSnippets,
@@ -23,13 +24,7 @@ use ra_ap_ide::{
 };
 use ra_ap_ide_db::imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
-use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
-use ra_ap_profile::StopWatch;
-use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
-use ra_ap_vfs::AbsPathBuf;
-
-use tokio::fs;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 /// Main interface to rust-analyzer functionality
 ///
@@ -39,44 +34,19 @@ use tracing::{debug, info, trace, warn};
 /// - Symbol renaming and references
 /// - File watching for automatic updates
 ///
-/// # File Watching
-///
-/// The analyzer includes built-in file watching capabilities that automatically
-/// detect changes to workspace files and update the analysis accordingly.
-/// File watching is set up automatically when a workspace is loaded.
-///
-/// To manually process file changes, call `process_changes()`:
-///
-/// ```ignore
-/// let mut analyzer = RustAnalyzerish::new();
-/// // ... set up workspace ...
-///
-/// // Process any pending file changes
-/// if analyzer.process_changes() {
-///     println!("Files were updated");
-/// }
-/// ```
+/// Use RustAnalyzerishBuilder to create properly configured instances.
 #[derive(Debug)]
 pub struct RustAnalyzerish {
     host: AnalysisHost,
-    current_project_root: Option<PathBuf>,
     file_watcher: FileWatcher,
 }
 
-impl Default for RustAnalyzerish {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RustAnalyzerish {
-    /// Create a new RustAnalyzer instance
-    pub fn new() -> Self {
-        Self {
-            host: AnalysisHost::new(None),
-            current_project_root: None,
-            file_watcher: FileWatcher::new(),
-        }
+    /// Create a new RustAnalyzer instance with a loaded workspace
+    ///
+    /// This is called by RustAnalyzerishBuilder after workspace loading.
+    pub fn new(host: AnalysisHost, file_watcher: FileWatcher) -> Self {
+        Self { host, file_watcher }
     }
 
     /// Debug information about the current cursor position
@@ -170,19 +140,22 @@ impl RustAnalyzerish {
 
     /// Common setup for cursor-based operations
     ///
-    /// Prepares analysis, loads file, validates cursor, and returns common data
+    /// Prepares analysis, validates cursor, and returns common data
     async fn setup_cursor_analysis(
         &mut self,
         cursor: &CursorCoordinates,
     ) -> Result<(Analysis, FileId, TextSize)> {
-        let path = PathBuf::from(&cursor.file_path);
+        // Ensure file watcher changes are applied
+        self.file_watcher.drain_and_apply_changes(&mut self.host)?;
 
-        // Ensure the project/workspace is loaded
-        let (file_id, analysis) = self.ensure_project_loaded(&path)?;
+        let analysis = self.host.analysis();
+        let file_id = self
+            .file_watcher
+            .get_file_id(&PathBuf::from(&cursor.file_path))?;
 
         // Get the file's line index for position conversion
         let line_index = analysis.file_line_index(file_id).map_err(|_| {
-            anyhow::anyhow!("Failed to get line index for file: {}", path.display())
+            anyhow::anyhow!("Failed to get line index for file: {}", cursor.file_path)
         })?;
 
         // Validate and convert cursor coordinates
@@ -562,7 +535,7 @@ impl RustAnalyzerish {
 
         if let Some(ref result) = rename_result {
             // Apply the edits to disk
-            Self::apply_rename_edits(result).await?;
+            RustAnalyzerUtils::apply_rename_edits(result).await?;
         }
 
         Ok(rename_result)
@@ -683,14 +656,8 @@ impl RustAnalyzerish {
     }
 
     /// Helper method to get line content from file text
-    // TODO Return Option<String>
     fn get_line_content(file_text: &str, line_number: usize) -> String {
-        let lines: Vec<&str> = file_text.lines().collect();
-        if line_number < lines.len() {
-            lines[line_number].to_string()
-        } else {
-            "".to_string()
-        }
+        RustAnalyzerUtils::get_line_content(file_text, line_number).unwrap_or_default()
     }
 
     /// Get rename information without applying changes to disk
@@ -798,8 +765,11 @@ impl RustAnalyzerish {
     ) -> Result<String> {
         let path = PathBuf::from(file_path);
 
-        // Ensure the project/workspace is loaded
-        let (file_id, analysis) = self.ensure_project_loaded(&path)?;
+        // Ensure file watcher changes are applied
+        self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+
+        let analysis = self.host.analysis();
+        let file_id = self.file_watcher.get_file_id(&path)?;
 
         // Get the file content
         let file_content = analysis
@@ -899,237 +869,5 @@ impl RustAnalyzerish {
         } else {
             Ok(result)
         }
-    }
-
-    /// Ensure the project workspace is loaded for the given file path
-    fn ensure_project_loaded(&mut self, file_path: &Path) -> Result<(FileId, Analysis)> {
-        // First check if we already have a workspace loaded
-        match &self.current_project_root {
-            Some(_root) => {
-                // Check if the file is already in our VFS (meaning rust-analyzer knows about it)
-                match FileWatcher::path_to_vfs_path(file_path) {
-                    Ok(vfs_path) => {
-                        let vfs = self.file_watcher.vfs();
-                        if let Some((file_id, _)) = vfs.file_id(&vfs_path) {
-                            debug!(
-                                "File {} already in VFS as {:?}, using current analysis",
-                                file_path.display(),
-                                file_id
-                            );
-                            self.file_watcher.drain_and_apply_changes(&mut self.host)?;
-                            Ok((file_id, self.host.analysis()))
-                        } else {
-                            // TODO Do we need to load file into the VFS??
-                            debug!(
-                                "File {} not found in VFS. It might be outside the workspace, if not, then we have an error and we should have loaded that file into the workspace",
-                                file_path.display()
-                            );
-                            Err(anyhow::anyhow!(
-                                "File {} not found in VFS",
-                                file_path.display()
-                            ))
-                        }
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Failed to convert path to VFS path: {}, checking workspace",
-                            e
-                        );
-                        Err(anyhow::anyhow!("Failed to convert path to VFS path: {}", e))
-                    }
-                }
-            }
-            None => {
-                // No workspace loaded yet, load it now
-                let project_root = self.find_project_root(file_path)?;
-                info!("Loading project workspace from: {}", project_root.display());
-                let analysis = self.load_workspace(&project_root)?;
-                self.file_watcher.drain_and_apply_changes(&mut self.host)?;
-                let file_id = self.file_watcher.get_file_id(file_path)?;
-                self.current_project_root = Some(project_root);
-                Ok((file_id, analysis))
-            }
-        }
-    }
-
-    /// Find the project root by looking for Cargo.toml
-    fn find_project_root(&self, file_path: &Path) -> Result<PathBuf> {
-        let path = if file_path.is_absolute() {
-            info!(
-                "Finding project root for absolute path: {}",
-                file_path.display()
-            );
-            file_path.to_path_buf()
-        } else {
-            info!(
-                "Finding project root for relative path: {}",
-                file_path.display()
-            );
-            std::env::current_dir()?.join(file_path)
-        };
-
-        let abs_path = AbsPathBuf::assert_utf8(
-            path.canonicalize()
-                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
-        );
-
-        let root = ProjectManifest::discover_single(&abs_path)?;
-        Ok(root.manifest_path().parent().to_path_buf().into())
-    }
-
-    /// Load workspace using load_workspace_at approach
-    fn load_workspace(&mut self, project_root: &Path) -> Result<Analysis> {
-        let abs_project_root =
-            AbsPathBuf::assert_utf8(project_root.canonicalize().with_context(|| {
-                format!(
-                    "Failed to canonicalize project root: {}",
-                    project_root.display()
-                )
-            })?);
-
-        // Configure cargo loading with better defaults
-        let cargo_config = CargoConfig {
-            sysroot: Some(RustLibSource::Discover),
-            all_targets: true,
-            rustc_source: None,
-            cfg_overrides: Default::default(),
-            ..Default::default()
-        };
-
-        let load_cargo_config = LoadCargoConfig {
-            load_out_dirs_from_check: true,
-            with_proc_macro_server: ProcMacroServerChoice::Sysroot,
-            prefill_caches: false, // We handle this manually to add more cores
-        };
-
-        info!("Loading workspace from: {}", abs_project_root);
-        let mut stop_watch = StopWatch::start();
-
-        let (db, vfs, _proc_macro) =
-            load_workspace_at(project_root, &cargo_config, &load_cargo_config, &|msg| {
-                trace!("Workspace loading progress: {}", msg);
-            })?;
-
-        // Update our state with the loaded workspace
-        self.host = AnalysisHost::with_database(db);
-
-        let elapsed = stop_watch.elapsed();
-        info!(
-            "Load time: {:?}ms, memory allocated: {}MB",
-            elapsed.time.as_millis(),
-            elapsed.memory.allocated.megabytes() as u64
-        );
-
-        let analysis = self.host.analysis();
-
-        // Set up file watching
-        self.file_watcher
-            .setup_file_watching(abs_project_root.clone(), vfs, &mut self.host)?;
-
-        // Prime caches with all available cores for better performance
-        let threads = num_cpus::get_physical();
-        ra_ap_ide_db::prime_caches::parallel_prime_caches(
-            self.host.raw_database(),
-            threads,
-            &|progress| {
-                trace!("Cache priming progress: {:?}", progress);
-            },
-        );
-
-        let elapsed = stop_watch.elapsed();
-        info!(
-            "Cache priming time with {} cores: {:?}ms, total memory allocated: {}MB",
-            threads,
-            elapsed.time.as_millis(),
-            elapsed.memory.allocated.megabytes() as u64
-        );
-
-        // Print all files in vfs
-        for (file_id, vfs_path) in self.file_watcher.vfs().iter() {
-            trace!("Loaded file in VFS: {:?} - {}", file_id, vfs_path);
-        }
-
-        Ok(analysis)
-    }
-
-    /// Apply rename edits to files on disk using rust-analyzer's
-    /// TextEditBuilder
-    pub async fn apply_rename_edits(rename_result: &RenameResult) -> anyhow::Result<()> {
-        for file_change in &rename_result.file_changes {
-            // Read the current file content
-            let mut content = fs::read_to_string(&file_change.file_path)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to read file {}: {}", file_change.file_path, e)
-                })?;
-
-            // Create TextEditBuilder to handle multiple edits atomically
-            let mut builder = TextEditBuilder::default();
-
-            // Create line index for UTF-8 safe position conversion
-            let line_index = LineIndex::new(&content);
-
-            // Add all edits to the builder (no need to sort - TextEditBuilder handles
-            // ordering)
-            for edit in &file_change.edits {
-                // Convert 1-based line/column to character offset using LineIndex for UTF-8 safety
-                let start_offset =
-                    Self::line_col_to_offset_with_index(&line_index, edit.line, edit.column)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Invalid start position {}:{} in file {}",
-                                edit.line,
-                                edit.column,
-                                file_change.file_path
-                            )
-                        })?;
-
-                let end_offset = Self::line_col_to_offset_with_index(
-                    &line_index,
-                    edit.end_line,
-                    edit.end_column,
-                )
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Invalid end position {}:{} in file {}",
-                        edit.end_line,
-                        edit.end_column,
-                        file_change.file_path
-                    )
-                })?;
-
-                // Create rust-analyzer TextRange
-                let range = TextRange::new(start_offset, end_offset);
-
-                // Add the replacement to the builder
-                builder.replace(range, edit.new_text.clone());
-            }
-
-            // Build the TextEdit and apply it atomically
-            let text_edit = builder.finish();
-            text_edit.apply(&mut content);
-
-            // Write the modified content back to the file
-            fs::write(&file_change.file_path, content)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to write file {}: {}", file_change.file_path, e)
-                })?;
-        }
-
-        Ok(())
-    }
-
-    /// Convert 1-based line/column to TextSize offset using LineIndex for UTF-8 safety
-    fn line_col_to_offset_with_index(
-        line_index: &LineIndex,
-        line: u32,
-        column: u32,
-    ) -> Option<TextSize> {
-        let line_col = LineCol {
-            line: line.saturating_sub(1),
-            col: column.saturating_sub(1),
-        };
-        line_index.offset(line_col)
     }
 }

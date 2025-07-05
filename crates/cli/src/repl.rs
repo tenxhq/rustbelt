@@ -1,5 +1,5 @@
 use anyhow::Result;
-use librustbelt::{RustAnalyzerish, entities::CursorCoordinates};
+use librustbelt::{builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use rustyline::{Config, DefaultEditor};
 use std::path::Path;
 
@@ -18,7 +18,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("Connecting to workspace: {}", workspace_path);
 
     // Initialize a standalone analyzer for the workspace
-    let mut analyzer = RustAnalyzerish::new();
+    let mut analyzer = RustAnalyzerishBuilder::from_file(workspace_path)?.build()?;
 
     // Configure rustyline with history support
     let config = Config::builder()

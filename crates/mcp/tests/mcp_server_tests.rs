@@ -25,7 +25,7 @@ async fn create_test_client() -> Result<(Client<()>, tokio::process::Child)> {
         .parent() // workspace root
         .unwrap();
 
-    println!("{workspace_root:?}");
+    println!("workspace: {workspace_root:?}");
     // First ensure the binary is built
     let output = Command::new("cargo")
         .current_dir(workspace_root)
