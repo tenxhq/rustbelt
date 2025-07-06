@@ -45,6 +45,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
             file_path: dummy_file.to_string_lossy().to_string(),
             line: 1,
             column: 1,
+            symbol: None,
         };
         let _ = analyzer.get_type_hint(&dummy_cursor).await; // This will trigger project loading
     }
@@ -121,6 +122,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             file_path: file_path.clone(),
                             line,
                             column,
+                            symbol: None,
                         };
 
                         match analyzer.get_type_hint(&cursor).await {
@@ -164,6 +166,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             file_path: file_path.clone(),
                             line,
                             column,
+                            symbol: None,
                         };
 
                         match analyzer.get_definition(&cursor).await {
@@ -210,6 +213,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             file_path: file_path.clone(),
                             line,
                             column,
+                            symbol: None,
                         };
 
                         match analyzer.get_completions(&cursor).await {
@@ -262,6 +266,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             file_path: file_path.clone(),
                             line,
                             column,
+                            symbol: None,
                         };
 
                         match analyzer.find_references(&cursor).await {
@@ -329,6 +334,7 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             file_path: file_path.clone(),
                             line,
                             column,
+                            symbol: None,
                         };
 
                         match analyzer.rename_symbol(&cursor, &new_name).await {

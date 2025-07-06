@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
                 file_path: file_path.clone(),
                 line,
                 column,
+                symbol: None,
             };
 
             match analyzer.get_type_hint(&cursor).await {
@@ -147,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
                 file_path: file_path.clone(),
                 line,
                 column,
+                symbol: None,
             };
 
             match analyzer.get_definition(&cursor).await {
@@ -181,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 file_path: file_path.clone(),
                 line,
                 column,
+                symbol: None,
             };
 
             match analyzer.get_completions(&cursor).await {
@@ -221,6 +224,7 @@ async fn main() -> anyhow::Result<()> {
                 file_path: file_path.clone(),
                 line,
                 column,
+                symbol: None,
             };
 
             match analyzer.find_references(&cursor).await {

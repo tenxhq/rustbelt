@@ -32,6 +32,11 @@ pub struct RenameParams {
     pub line: u32,
     /// Column number (1-based)
     pub column: u32,
+    /// Optional symbol to find near the given coordinates.
+    /// If provided, will search for this symbol within a tolerance box
+    /// of +/- 5 lines/columns around the given coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
     /// New name for the symbol
     pub new_name: String,
 }
@@ -282,6 +287,7 @@ impl Rustbelt {
             file_path: params.file_path,
             line: params.line,
             column: params.column,
+            symbol: params.symbol,
         };
         self.ensure_analyzer(&cursor.file_path).await?;
         match self

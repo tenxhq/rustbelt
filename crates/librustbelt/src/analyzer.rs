@@ -143,28 +143,50 @@ impl RustAnalyzerish {
     /// Prepares analysis, validates cursor, and returns common data
     async fn setup_cursor_analysis(
         &mut self,
-        cursor: &CursorCoordinates,
-    ) -> Result<(Analysis, FileId, TextSize)> {
+        raw_cursor: &CursorCoordinates,
+    ) -> Result<(Analysis, FileId, TextSize, CursorCoordinates)> {
         // Ensure file watcher changes are applied
         self.file_watcher.drain_and_apply_changes(&mut self.host)?;
 
         let analysis = self.host.analysis();
         let file_id = self
             .file_watcher
-            .get_file_id(&PathBuf::from(&cursor.file_path))?;
+            .get_file_id(&PathBuf::from(&raw_cursor.file_path))?;
+
+        // Resolve coordinates if a symbol is provided
+        let resolved_cursor = if raw_cursor.symbol.is_some() {
+            // Get file content for symbol resolution
+            let file_content = std::fs::read_to_string(&raw_cursor.file_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read file content: {}", e))?;
+            raw_cursor.resolve_coordinates(&file_content)
+        } else {
+            raw_cursor.clone()
+        };
 
         // Get the file's line index for position conversion
         let line_index = analysis.file_line_index(file_id).map_err(|_| {
-            anyhow::anyhow!("Failed to get line index for file: {}", cursor.file_path)
+            anyhow::anyhow!("Failed to get line index for file: {}", raw_cursor.file_path)
         })?;
 
-        // Validate and convert cursor coordinates
-        let offset = self.validate_and_convert_cursor(cursor, &line_index)?;
+        // Validate and convert cursor coordinates (using resolved coordinates)
+        let offset = self.validate_and_convert_cursor(&resolved_cursor, &line_index)?;
 
-        // Debug cursor position
-        self.debug_cursor_position(cursor, file_id, offset, &analysis);
+        // Debug cursor position (show both original and resolved if different)
+        if raw_cursor.symbol.is_some()
+            && (raw_cursor.line != resolved_cursor.line || raw_cursor.column != resolved_cursor.column)
+        {
+            trace!(
+                "Symbol '{}' resolved from {}:{} to {}:{}",
+                raw_cursor.symbol.as_ref().unwrap(),
+                raw_cursor.line,
+                raw_cursor.column,
+                resolved_cursor.line,
+                resolved_cursor.column
+            );
+        }
+        self.debug_cursor_position(&resolved_cursor, file_id, offset, &analysis);
 
-        Ok((analysis, file_id, offset))
+        Ok((analysis, file_id, offset, resolved_cursor))
     }
 
     /// Create a FilePosition from file_id and offset
@@ -173,8 +195,8 @@ impl RustAnalyzerish {
     }
 
     /// Get type hint information at the specified cursor position
-    pub async fn get_type_hint(&mut self, cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
-        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
+    pub async fn get_type_hint(&mut self, raw_cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
+        let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         // Create TextRange for the hover query - use a single point range
         let text_range = TextRange::new(offset, offset);
@@ -256,9 +278,9 @@ impl RustAnalyzerish {
     /// Get completion suggestions at the specified cursor position
     pub async fn get_completions(
         &mut self,
-        cursor: &CursorCoordinates,
+        raw_cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
+        let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         debug!(
             "Attempting completions query for file {:?} at offset {:?} (line {} col {})",
@@ -369,9 +391,9 @@ impl RustAnalyzerish {
     /// Get definition information at the specified cursor position
     pub async fn get_definition(
         &mut self,
-        cursor: &CursorCoordinates,
+        raw_cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<DefinitionInfo>>> {
-        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
+        let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         debug!(
             "Attempting goto_definition query for file {:?} at offset {:?} (line {} col {})",
@@ -527,11 +549,11 @@ impl RustAnalyzerish {
     /// to disk
     pub async fn rename_symbol(
         &mut self,
-        cursor: &CursorCoordinates,
+        raw_cursor: &CursorCoordinates,
         new_name: &str,
     ) -> Result<Option<RenameResult>> {
         // Get the rename information
-        let rename_result = self.get_rename_info(cursor, new_name).await?;
+        let rename_result = self.get_rename_info(raw_cursor, new_name).await?;
 
         if let Some(ref result) = rename_result {
             // Apply the edits to disk
@@ -544,9 +566,9 @@ impl RustAnalyzerish {
     /// Find all references to a symbol at the specified cursor position
     pub async fn find_references(
         &mut self,
-        cursor: &CursorCoordinates,
+        raw_cursor: &CursorCoordinates,
     ) -> Result<Option<Vec<ReferenceInfo>>> {
-        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
+        let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         debug!(
             "Attempting find_all_refs query for file {:?} at offset {:?} (line {} col {})",
@@ -663,10 +685,10 @@ impl RustAnalyzerish {
     /// Get rename information without applying changes to disk
     pub async fn get_rename_info(
         &mut self,
-        cursor: &CursorCoordinates,
+        raw_cursor: &CursorCoordinates,
         new_name: &str,
     ) -> Result<Option<RenameResult>> {
-        let (analysis, file_id, offset) = self.setup_cursor_analysis(cursor).await?;
+        let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         debug!(
             "Attempting rename for file {:?} at offset {:?} (line {} col {}) to '{}'",

@@ -44,6 +44,7 @@ async fn test_type_hint_simple_variable() {
         file_path: sample_path.to_str().unwrap().to_string(),
         line: 31,
         column: 13,
+        symbol: None,
     };
     let type_info = analyzer
         .get_type_hint(&cursor)
@@ -75,6 +76,7 @@ async fn test_type_hint_function_call() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 35,
             column: 14,
+            symbol: None,
         })
         .await
         .expect("Error getting type hint")
@@ -100,6 +102,7 @@ async fn test_type_hint_complex_generic() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 46,
             column: 9,
+            symbol: None,
         })
         .await
         .expect("Error getting type hint");
@@ -135,6 +138,7 @@ async fn test_get_definition_struct() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 33,
             column: 18,
+            symbol: None,
         })
         .await
         .expect("Error getting definition")
@@ -166,6 +170,7 @@ async fn test_get_external_definition_function() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 35,
             column: 14,
+            symbol: None,
         })
         .await
         .expect("Error getting definition")
@@ -201,6 +206,7 @@ async fn test_get_definition_method() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 33,
             column: 55,
+            symbol: None,
         })
         .await
         .expect("Error getting definition")
@@ -228,6 +234,7 @@ async fn test_error_handling_invalid_position() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 9999,
             column: 9999,
+            symbol: None,
         })
         .await;
 
@@ -246,6 +253,7 @@ async fn test_error_handling_nonexistent_file() {
             file_path: "/nonexistent/file.rs".to_string(),
             line: 10,
             column: 10,
+            symbol: None,
         })
         .await;
 
@@ -265,6 +273,7 @@ async fn test_no_definition_available() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 1,
             column: 1,
+            symbol: None,
         })
         .await
         .expect("Error getting definition");
@@ -295,6 +304,7 @@ async fn test_multiple_usages_same_analyzer() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 30,
             column: 9,
+            symbol: None,
         })
         .await;
     assert!(type_result.is_ok());
@@ -305,6 +315,7 @@ async fn test_multiple_usages_same_analyzer() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 32,
             column: 15,
+            symbol: None,
         })
         .await;
     assert!(def_result.is_ok());
@@ -315,6 +326,7 @@ async fn test_multiple_usages_same_analyzer() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 39,
             column: 9,
+            symbol: None,
         })
         .await;
     assert!(type_result2.is_ok());
@@ -335,6 +347,7 @@ async fn test_analyzer_workspace_loading() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 5,
             column: 10,
+            symbol: None,
         })
         .await;
 
@@ -366,6 +379,7 @@ async fn test_type_hint_variable_with_name() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 41,
             column: 9,
+            symbol: None,
         })
         .await
         .expect("Error getting type hint")
@@ -403,6 +417,7 @@ async fn test_get_completions_basic() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 31,
             column: 18,
+            symbol: None,
         })
         .await
         .expect("Error getting completions");
@@ -440,6 +455,7 @@ async fn test_get_completions_method_chaining() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 32,
             column: 20,
+            symbol: None,
         })
         .await
         .expect("Error getting completions");
@@ -584,6 +600,7 @@ async fn test_find_references() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 5, // Person struct definition
             column: 12,
+            symbol: None,
         })
         .await
         .expect("Error finding references");
@@ -676,6 +693,7 @@ async fn test_find_references_variable() {
             file_path: sample_path.to_str().unwrap().to_string(),
             line: 31, // people variable declaration
             column: 13,
+            symbol: None,
         })
         .await
         .expect("Error finding references");
@@ -732,5 +750,51 @@ async fn test_find_references_variable() {
         references.iter().any(|r| r.content.contains(symbol_name)),
         "At least one reference should contain the symbol name '{}' in its content",
         symbol_name
+    );
+}
+
+#[tokio::test]
+async fn test_symbol_resolution() {
+    let analyzer = get_shared_analyzer().await;
+    let mut analyzer = analyzer.lock().await;
+    let sample_path = get_sample_file_path();
+
+    // Test finding a symbol with approximate coordinates
+    let cursor = CursorCoordinates {
+        file_path: sample_path.to_str().unwrap().to_string(),
+        line: 29, // Approximate line near the 'people' variable (line 31 is exact, testing tolerance)
+        column: 6, // Approximate column
+        symbol: Some("people".to_string()),
+    };
+
+    let type_info = analyzer
+        .get_type_hint(&cursor)
+        .await
+        .expect("Should get type hint");
+
+    assert!(
+        type_info.is_some(),
+        "Should find type info for 'people' symbol"
+    );
+    eprintln!("{type_info:?}");
+    let type_info = type_info.unwrap();
+    assert!(
+        type_info.symbol.contains("people"),
+        "Symbol should contain 'people': {}",
+        type_info.symbol
+    );
+    assert!(
+        type_info
+            .canonical_types
+            .iter()
+            .any(|t| t.contains("HashMap"))
+    );
+    assert_eq!(
+        type_info.line, 31,
+        "Line number should be found"
+    );
+    assert_eq!(
+        type_info.column, 13,
+        "Column number should be found"
     );
 }

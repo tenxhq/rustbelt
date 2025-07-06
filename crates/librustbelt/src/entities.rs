@@ -2,6 +2,7 @@ use ra_ap_ide::LineCol;
 use ra_ap_ide_db::SymbolKind;
 use serde::{Deserialize, Serialize};
 
+const TOLERANCE: u32 = 5;
 /// Cursor coordinates for specifying position in a file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -12,6 +13,87 @@ pub struct CursorCoordinates {
     pub line: u32,
     /// Column number (1-based)
     pub column: u32,
+    /// Optional symbol to find near the given coordinates.
+    /// If provided, will search for this symbol within a tolerance box
+    /// of +/- 5 lines/columns around the given coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+}
+
+impl CursorCoordinates {
+    /// Find the exact coordinates of a symbol within a tolerance box
+    ///
+    /// If a symbol is specified, searches for it within +/- 5 lines/columns
+    /// of the given coordinates. Returns the refined coordinates or original
+    /// coordinates if symbol is not found or not specified.
+    pub fn resolve_coordinates(&self, file_content: &str) -> CursorCoordinates {
+        if let Some(ref symbol) = self.symbol {
+            self.find_symbol_in_tolerance_box(file_content, symbol)
+                .unwrap_or_else(|| self.clone())
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Find a symbol within a tolerance box around the given coordinates
+    fn find_symbol_in_tolerance_box(
+        &self,
+        file_content: &str,
+        symbol: &str,
+    ) -> Option<CursorCoordinates> {
+        let lines: Vec<&str> = file_content.lines().collect();
+
+        // Generate a range of line numbers to search, starting from the center line and expanding outwards
+        let mut line_range = Vec::new();
+        for offset in 0..=TOLERANCE {
+            let actual_line_number = (self.line + offset) as usize;
+            if actual_line_number <= lines.len() {
+                line_range.push(actual_line_number);
+            }
+            if offset != 0 {
+                let actual_line_number = (self.line - offset) as usize;
+                if actual_line_number > 0 {
+                    line_range.push(actual_line_number);
+                }
+            }
+        }
+
+        // Search line by line within the tolerance box
+        for actual_line_number in line_range {
+            if let Some(line) = lines.get(actual_line_number - 1) {
+                if let Some(column_pos) = self.find_symbol_in_line(line, symbol, actual_line_number) {
+                    return Some(CursorCoordinates {
+                        file_path: self.file_path.clone(),
+                        line: actual_line_number as u32,
+                        column: column_pos,
+                        symbol: self.symbol.clone(),
+                    });
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a symbol within a line, considering column tolerance
+    fn find_symbol_in_line(&self, line: &str, symbol: &str, line_number: usize) -> Option<u32> {
+        // If this is the center line, use column tolerance
+        if line_number == self.line as usize {
+            let start_col = (self.column as u32 - TOLERANCE).max(1) as usize;
+            let end_col = (self.column as u32 + TOLERANCE).min(line.len() as u32) as usize;
+
+            // Search within column tolerance first
+            if let Some(pos) = line
+                .get(start_col.saturating_sub(1)..end_col)
+                .and_then(|substr| substr.find(symbol))
+            {
+                return Some((start_col + pos) as u32);
+            }
+        }
+
+        // If not found in tolerance or not the center line, search entire line
+        line.find(symbol).map(|pos| pos as u32 + 1)
+    }
 }
 
 impl From<&CursorCoordinates> for LineCol {
