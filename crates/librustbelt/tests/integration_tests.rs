@@ -789,12 +789,6 @@ async fn test_symbol_resolution() {
             .iter()
             .any(|t| t.contains("HashMap"))
     );
-    assert_eq!(
-        type_info.line, 31,
-        "Line number should be found"
-    );
-    assert_eq!(
-        type_info.column, 13,
-        "Column number should be found"
-    );
+    assert_eq!(type_info.line, 31, "Line number should be found");
+    assert_eq!(type_info.column, 13, "Column number should be found");
 }

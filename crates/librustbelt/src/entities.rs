@@ -50,7 +50,7 @@ impl CursorCoordinates {
             if actual_line_number <= lines.len() {
                 line_range.push(actual_line_number);
             }
-            if offset != 0 {
+            if offset != 0 && self.line > offset {
                 let actual_line_number = (self.line - offset) as usize;
                 if actual_line_number > 0 {
                     line_range.push(actual_line_number);
@@ -61,7 +61,8 @@ impl CursorCoordinates {
         // Search line by line within the tolerance box
         for actual_line_number in line_range {
             if let Some(line) = lines.get(actual_line_number - 1) {
-                if let Some(column_pos) = self.find_symbol_in_line(line, symbol, actual_line_number) {
+                if let Some(column_pos) = self.find_symbol_in_line(line, symbol, actual_line_number)
+                {
                     return Some(CursorCoordinates {
                         file_path: self.file_path.clone(),
                         line: actual_line_number as u32,
@@ -77,22 +78,41 @@ impl CursorCoordinates {
 
     /// Find a symbol within a line, considering column tolerance
     fn find_symbol_in_line(&self, line: &str, symbol: &str, line_number: usize) -> Option<u32> {
-        // If this is the center line, use column tolerance
-        if line_number == self.line as usize {
-            let start_col = (self.column as u32 - TOLERANCE).max(1) as usize;
-            let end_col = (self.column as u32 + TOLERANCE).min(line.len() as u32) as usize;
+        // Find all occurrences of the symbol in the line
+        let mut matches = Vec::new();
+        let mut start = 0;
+        while let Some(pos) = line[start..].find(symbol) {
+            let absolute_pos = start + pos;
+            matches.push(absolute_pos);
+            start = absolute_pos + 1;
+        }
 
-            // Search within column tolerance first
-            if let Some(pos) = line
-                .get(start_col.saturating_sub(1)..end_col)
-                .and_then(|substr| substr.find(symbol))
-            {
-                return Some((start_col + pos) as u32);
+        if matches.is_empty() {
+            return None;
+        }
+
+        // If this is the center line, find the closest match to the target column
+        if line_number == self.line as usize {
+            let target_col = self.column as usize;
+            let mut closest_pos = matches[0];
+            let mut closest_distance = (closest_pos + 1).abs_diff(target_col);
+
+            for &pos in &matches {
+                let distance = (pos + 1).abs_diff(target_col);
+                if distance < closest_distance {
+                    closest_distance = distance;
+                    closest_pos = pos;
+                }
+            }
+
+            // Check if the closest match is within tolerance
+            if closest_distance <= TOLERANCE as usize {
+                return Some(closest_pos as u32 + 1);
             }
         }
 
-        // If not found in tolerance or not the center line, search entire line
-        line.find(symbol).map(|pos| pos as u32 + 1)
+        // If not the center line or no match within tolerance, return the first occurrence
+        Some(matches[0] as u32 + 1)
     }
 }
 

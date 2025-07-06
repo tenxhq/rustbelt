@@ -165,7 +165,10 @@ impl RustAnalyzerish {
 
         // Get the file's line index for position conversion
         let line_index = analysis.file_line_index(file_id).map_err(|_| {
-            anyhow::anyhow!("Failed to get line index for file: {}", raw_cursor.file_path)
+            anyhow::anyhow!(
+                "Failed to get line index for file: {}",
+                raw_cursor.file_path
+            )
         })?;
 
         // Validate and convert cursor coordinates (using resolved coordinates)
@@ -173,7 +176,8 @@ impl RustAnalyzerish {
 
         // Debug cursor position (show both original and resolved if different)
         if raw_cursor.symbol.is_some()
-            && (raw_cursor.line != resolved_cursor.line || raw_cursor.column != resolved_cursor.column)
+            && (raw_cursor.line != resolved_cursor.line
+                || raw_cursor.column != resolved_cursor.column)
         {
             trace!(
                 "Symbol '{}' resolved from {}:{} to {}:{}",
@@ -195,7 +199,10 @@ impl RustAnalyzerish {
     }
 
     /// Get type hint information at the specified cursor position
-    pub async fn get_type_hint(&mut self, raw_cursor: &CursorCoordinates) -> Result<Option<TypeHint>> {
+    pub async fn get_type_hint(
+        &mut self,
+        raw_cursor: &CursorCoordinates,
+    ) -> Result<Option<TypeHint>> {
         let (analysis, file_id, offset, cursor) = self.setup_cursor_analysis(raw_cursor).await?;
 
         // Create TextRange for the hover query - use a single point range
