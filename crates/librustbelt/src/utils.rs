@@ -5,11 +5,12 @@
 
 use std::path::Path;
 
-use super::entities::RenameResult;
 use anyhow::Result;
 use ra_ap_ide::{LineCol, LineIndex, TextRange, TextSize};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
 use tokio::fs;
+
+use super::entities::RenameResult;
 
 /// Utility functions for Rust analyzer operations
 pub struct RustAnalyzerUtils;

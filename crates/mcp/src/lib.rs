@@ -4,11 +4,12 @@
 //! Protocol (MCP). It exposes IDE capabilities like type hints,
 //! go-to-definition, and more as MCP tools.
 
+use std::path::Path;
+use std::sync::Arc;
+
 use libruskel::Ruskel;
 use librustbelt::{RustAnalyzerish, builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::sync::Arc;
 use tenx_mcp::{Result, ServerCtx, mcp_server, schema::*, schemars, tool};
 use tokio::sync::Mutex;
 use tracing::info;

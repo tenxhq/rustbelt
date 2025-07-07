@@ -1,7 +1,8 @@
+use std::path::Path;
+
 use anyhow::Result;
 use librustbelt::{builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use rustyline::{Config, DefaultEditor};
-use std::path::Path;
 
 fn resolve_path(workspace_path: &str, file_path: &str) -> String {
     if Path::new(file_path).is_absolute() {

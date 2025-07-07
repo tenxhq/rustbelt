@@ -6,12 +6,6 @@
 
 use std::path::PathBuf;
 
-use super::entities::{
-    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
-    TextEdit, TypeHint,
-};
-use super::file_watcher::FileWatcher;
-use super::utils::RustAnalyzerUtils;
 use anyhow::Result;
 use ra_ap_hir::ClosureStyle;
 use ra_ap_ide::{
@@ -25,6 +19,13 @@ use ra_ap_ide::{
 use ra_ap_ide_db::imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
 use tracing::{debug, trace, warn};
+
+use super::entities::{
+    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
+    TextEdit, TypeHint,
+};
+use super::file_watcher::FileWatcher;
+use super::utils::RustAnalyzerUtils;
 
 /// Main interface to rust-analyzer functionality
 ///

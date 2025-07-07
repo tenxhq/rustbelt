@@ -3,9 +3,10 @@
 //! These tests verify the MCP server protocol implementation using the tenx-mcp
 //! client.
 
-use serde_json::Value;
 use std::collections::HashMap;
 use std::{process::Command, time::Duration};
+
+use serde_json::Value;
 use tenx_mcp::{
     Client, Result, ServerAPI,
     schema::{ClientCapabilities, Implementation, InitializeResult},

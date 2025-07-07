@@ -6,9 +6,6 @@
 
 use std::path::{Path, PathBuf};
 
-use super::analyzer::RustAnalyzerish;
-use super::file_watcher::FileWatcher;
-use super::utils::RustAnalyzerUtils;
 use anyhow::Result;
 use ra_ap_ide::AnalysisHost;
 use ra_ap_ide_db::prime_caches;
@@ -17,6 +14,10 @@ use ra_ap_profile::StopWatch;
 use ra_ap_project_model::{CargoConfig, ProjectManifest, RustLibSource};
 use ra_ap_vfs::AbsPathBuf;
 use tracing::{info, trace};
+
+use super::analyzer::RustAnalyzerish;
+use super::file_watcher::FileWatcher;
+use super::utils::RustAnalyzerUtils;
 
 /// Builder for creating configured RustAnalyzerish instances
 #[derive(Debug)]

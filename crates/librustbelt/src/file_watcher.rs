@@ -3,6 +3,8 @@
 //! This module handles file system watching and VFS synchronization,
 //! keeping the analysis host updated with file changes.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, unbounded};
 use ra_ap_ide::{AnalysisHost, FileId};
@@ -10,7 +12,6 @@ use ra_ap_ide_db::ChangeWithProcMacros;
 use ra_ap_vfs::loader::{Handle, Message};
 use ra_ap_vfs::{AbsPathBuf, Vfs, VfsPath};
 use ra_ap_vfs_notify::NotifyHandle;
-use std::path::Path;
 use tracing::{debug, error, trace};
 
 /// File watching configuration and state
