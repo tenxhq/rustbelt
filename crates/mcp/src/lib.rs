@@ -74,6 +74,25 @@ pub struct ViewInlayHintsParams {
     pub end_line: Option<u32>,
 }
 
+/// Parameters for the apply_assist tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ApplyAssistParams {
+    // TODO Do not nest CursorCoordinates here until tenx-mcp properly reports schema
+    /// Absolute path to the Rust source file
+    pub file_path: String,
+    /// Line number (1-based)
+    pub line: u32,
+    /// Column number (1-based)
+    pub column: u32,
+    /// Optional symbol to find near the given coordinates.
+    /// If provided, will search for this symbol within a tolerance box
+    /// of +/- 5 lines/columns around the given coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// ID of the assist to apply
+    pub assist_id: String,
+}
+
 /// Rust-Analyzer MCP server connection
 #[derive(Debug, Clone)]
 pub struct Rustbelt {
@@ -392,6 +411,98 @@ impl Rustbelt {
                 .is_error(false)),
             Err(e) => Ok(CallToolResult::new()
                 .with_text_content(format!("Error finding references: {e}"))
+                .is_error(true)),
+        }
+    }
+
+    /// Get available code assists (code actions) at a specific position in Rust code
+    ///
+    /// Returns available assists like "extract function", "merge imports", "add missing impl", etc.
+    /// These are context-sensitive refactoring and code transformation options that rust-analyzer
+    /// can apply to improve or modify your code.
+    ///
+    /// Returns a list of available assists with their IDs, descriptions, and target ranges.
+    #[tool]
+    async fn get_assists(
+        &self,
+        _ctx: &ServerCtx,
+        cursor: CursorCoordinates,
+    ) -> Result<CallToolResult> {
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .get_assists(&cursor)
+            .await
+        {
+            Ok(Some(assists)) => {
+                let result_text = assists
+                    .iter()
+                    .map(|assist| assist.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
+            }
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content("No assists available at this position")
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error getting assists: {e}"))
+                .is_error(true)),
+        }
+    }
+
+    /// Apply a specific code assist (code action) at a position in Rust code
+    ///
+    /// Takes an assist ID (from get_assists) and applies the corresponding code transformation
+    /// to your source files. This will modify files on disk with the changes suggested by
+    /// the assist.
+    ///
+    /// Common assists include "merge_imports", "extract_function", "add_missing_impl", etc.
+    /// Returns a summary of the changes made to files.
+    #[tool]
+    async fn apply_assist(
+        &self,
+        _ctx: &ServerCtx,
+        params: ApplyAssistParams,
+    ) -> Result<CallToolResult> {
+        let cursor = CursorCoordinates {
+            file_path: params.file_path,
+            line: params.line,
+            column: params.column,
+            symbol: params.symbol,
+        };
+        self.ensure_analyzer(&cursor.file_path).await?;
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .apply_assist(&cursor, &params.assist_id)
+            .await
+        {
+            Ok(Some(source_change)) => {
+                let result_text = source_change.to_string();
+
+                Ok(CallToolResult::new()
+                    .with_text_content(result_text)
+                    .is_error(false))
+            }
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content(format!(
+                    "Assist '{}' not available at this position",
+                    params.assist_id
+                ))
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error applying assist: {e}"))
                 .is_error(true)),
         }
     }

@@ -10,7 +10,7 @@ use ra_ap_ide::{LineCol, LineIndex, TextRange, TextSize};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
 use tokio::fs;
 
-use super::entities::RenameResult;
+use super::entities::{FileChange, RenameResult};
 
 /// Utility functions for Rust analyzer operations
 pub struct RustAnalyzerUtils;
@@ -115,5 +115,61 @@ impl RustAnalyzerUtils {
                 .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?,
         );
         Ok(abs_path)
+    }
+
+    /// Apply a file change to disk (used by assists)
+    pub async fn apply_file_change(file_change: &FileChange) -> Result<()> {
+        // Read the current file content
+        let mut content = fs::read_to_string(&file_change.file_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_change.file_path, e))?;
+
+        // Create TextEditBuilder to handle multiple edits atomically
+        let mut builder = TextEditBuilder::default();
+
+        // Create line index for UTF-8 safe position conversion
+        let line_index = LineIndex::new(&content);
+
+        // Add all edits to the builder (no need to sort - TextEditBuilder handles ordering)
+        for edit in &file_change.edits {
+            // Convert 1-based line/column to character offset using LineIndex for UTF-8 safety
+            let start_offset =
+                Self::line_col_to_offset_with_index(&line_index, edit.line, edit.column)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid start position {}:{} in file {}",
+                            edit.line,
+                            edit.column,
+                            file_change.file_path
+                        )
+                    })?;
+
+            let end_offset =
+                Self::line_col_to_offset_with_index(&line_index, edit.end_line, edit.end_column)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid end position {}:{} in file {}",
+                            edit.end_line,
+                            edit.end_column,
+                            file_change.file_path
+                        )
+                    })?;
+
+            let text_range = TextRange::new(start_offset, end_offset);
+            builder.replace(text_range, edit.new_text.clone());
+        }
+
+        // Build the final text edit and apply it
+        let text_edit = builder.finish();
+        text_edit.apply(&mut content);
+
+        // Write the modified content back to the file
+        fs::write(&file_change.file_path, content)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to write file {}: {}", file_change.file_path, e)
+            })?;
+
+        Ok(())
     }
 }

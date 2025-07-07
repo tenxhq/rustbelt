@@ -73,6 +73,26 @@ enum Commands {
         /// Path to the Rust source file
         file_path: String,
     },
+    /// Get available code assists (code actions) at a specific position
+    GetAssists {
+        /// Path to the Rust source file
+        file_path: String,
+        /// Line number (1-based)
+        line: u32,
+        /// Column number (1-based)
+        column: u32,
+    },
+    /// Apply a specific code assist at a position
+    ApplyAssist {
+        /// Path to the Rust source file
+        file_path: String,
+        /// Line number (1-based)
+        line: u32,
+        /// Column number (1-based)
+        column: u32,
+        /// ID of the assist to apply
+        assist_id: String,
+    },
     /// Repl to a workspace for interactive queries
     Repl {
         /// Path to the workspace directory
@@ -263,6 +283,87 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!("Error viewing inlay hints: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::GetAssists {
+            file_path,
+            line,
+            column,
+        } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            // Initialize a standalone analyzer for CLI usage
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
+
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+                symbol: None,
+            };
+
+            match analyzer.get_assists(&cursor).await {
+                Ok(Some(assists)) => {
+                    println!(
+                        "Available assists at {}:{}:{} ({} items):",
+                        file_path,
+                        line,
+                        column,
+                        assists.len()
+                    );
+                    for assist in assists {
+                        println!("  {} ({}): {}", assist.label, assist.id, assist.target);
+                    }
+                }
+                Ok(None) => {
+                    eprintln!("No assists available at {file_path}:{line}:{column}");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error getting assists: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::ApplyAssist {
+            file_path,
+            line,
+            column,
+            assist_id,
+        } => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            // Initialize a standalone analyzer for CLI usage
+            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
+
+            let cursor = CursorCoordinates {
+                file_path: file_path.clone(),
+                line,
+                column,
+                symbol: None,
+            };
+
+            match analyzer.apply_assist(&cursor, &assist_id).await {
+                Ok(Some(source_change)) => {
+                    println!("Successfully applied assist '{}':", assist_id);
+                    for file_change in &source_change.file_changes {
+                        println!("  Modified file: {}", file_change.file_path);
+                        println!("    {} edits applied", file_change.edits.len());
+                    }
+                }
+                Ok(None) => {
+                    eprintln!(
+                        "Assist '{}' not available at {file_path}:{line}:{column}",
+                        assist_id
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error applying assist '{}': {}", assist_id, e);
                     std::process::exit(1);
                 }
             }

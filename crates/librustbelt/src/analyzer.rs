@@ -16,13 +16,14 @@ use ra_ap_ide::{
     InlayHintsConfig, LifetimeElisionHints, LineCol, LineIndex, MonikerResult, SubstTyLen,
     TextRange, TextSize,
 };
+use ra_ap_ide_assists::{AssistConfig, AssistResolveStrategy, assists};
 use ra_ap_ide_db::imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
 use tracing::{debug, trace, warn};
 
 use super::entities::{
-    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
-    TextEdit, TypeHint,
+    AssistInfo, AssistSourceChange, CompletionItem, CursorCoordinates, DefinitionInfo, FileChange,
+    ReferenceInfo, RenameResult, TextEdit, TypeHint,
 };
 use super::file_watcher::FileWatcher;
 use super::utils::RustAnalyzerUtils;
@@ -898,6 +899,218 @@ impl RustAnalyzerish {
             Ok(selected_lines.join("\n"))
         } else {
             Ok(result)
+        }
+    }
+
+    /// Get available code assists at the specified cursor position
+    pub async fn get_assists(
+        &mut self,
+        raw_cursor: &CursorCoordinates,
+    ) -> Result<Option<Vec<AssistInfo>>> {
+        let cursor = raw_cursor.resolve_coordinates(
+            &std::fs::read_to_string(&raw_cursor.file_path).unwrap_or_default(),
+        );
+
+        self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+
+        let path = PathBuf::from(&cursor.file_path);
+        let file_id = self.file_watcher.get_file_id(&path)?;
+
+        let analysis = self.host.analysis();
+
+        // Convert 1-based line/column to 0-based for rust-analyzer
+        let line_col = LineCol {
+            line: cursor.line.saturating_sub(1),
+            col: cursor.column.saturating_sub(1),
+        };
+
+        // Get the line index and convert to TextSize offset
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        let offset = line_index.offset(line_col).unwrap_or(TextSize::from(0));
+
+        self.debug_cursor_position(&cursor, file_id, offset, &analysis);
+
+        let file_range = FileRange {
+            file_id,
+            range: TextRange::new(offset, offset),
+        };
+
+        // Create assist config with reasonable defaults
+        let assist_config = AssistConfig {
+            snippet_cap: None,
+            allowed: None,
+            insert_use: InsertUseConfig {
+                granularity: ImportGranularity::Crate,
+                enforce_granularity: true,
+                prefix_kind: PrefixKind::Plain,
+                group: true,
+                skip_glob_imports: true,
+            },
+            prefer_no_std: false,
+            prefer_prelude: false,
+            prefer_absolute: false,
+            assist_emit_must_use: false,
+            term_search_fuel: 400,
+            term_search_borrowck: true,
+            code_action_grouping: false,
+            expr_fill_default: ra_ap_ide_db::assists::ExprFillDefaultMode::Todo,
+            prefer_self_ty: false,
+        };
+
+        // Get available assists
+        let assists_result = assists(
+            self.host.raw_database(),
+            &assist_config,
+            AssistResolveStrategy::None,
+            file_range,
+        );
+
+        if assists_result.is_empty() {
+            Ok(None)
+        } else {
+            let assist_infos = assists_result
+                .into_iter()
+                .map(|assist| AssistInfo {
+                    id: assist.id.0.to_string(),
+                    kind: if let Some(group) = &assist.group {
+                        group.0.to_string()
+                    } else {
+                        "refactor".to_string()
+                    },
+                    label: assist.label.to_string(),
+                    target: format!("{:?}", assist.target),
+                    source_change: None,
+                })
+                .collect();
+
+            Ok(Some(assist_infos))
+        }
+    }
+
+    /// Apply a specific code assist at the specified cursor position
+    pub async fn apply_assist(
+        &mut self,
+        raw_cursor: &CursorCoordinates,
+        assist_id: &str,
+    ) -> Result<Option<AssistSourceChange>> {
+        let cursor = raw_cursor.resolve_coordinates(
+            &std::fs::read_to_string(&raw_cursor.file_path).unwrap_or_default(),
+        );
+
+        self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+
+        let path = PathBuf::from(&cursor.file_path);
+        let file_id = self.file_watcher.get_file_id(&path)?;
+
+        let analysis = self.host.analysis();
+
+        // Convert 1-based line/column to 0-based for rust-analyzer
+        let line_col = LineCol {
+            line: cursor.line.saturating_sub(1),
+            col: cursor.column.saturating_sub(1),
+        };
+
+        // Get the line index and convert to TextSize offset
+        let line_index = analysis
+            .file_line_index(file_id)
+            .map_err(|_| anyhow::anyhow!("Failed to get line index"))?;
+
+        let offset = line_index.offset(line_col).unwrap_or(TextSize::from(0));
+
+        self.debug_cursor_position(&cursor, file_id, offset, &analysis);
+
+        let file_range = FileRange {
+            file_id,
+            range: TextRange::new(offset, offset),
+        };
+
+        // Create assist config with reasonable defaults
+        let assist_config = AssistConfig {
+            snippet_cap: None,
+            allowed: None,
+            insert_use: InsertUseConfig {
+                granularity: ImportGranularity::Crate,
+                enforce_granularity: true,
+                prefix_kind: PrefixKind::Plain,
+                group: true,
+                skip_glob_imports: true,
+            },
+            prefer_no_std: false,
+            prefer_prelude: false,
+            prefer_absolute: false,
+            assist_emit_must_use: false,
+            term_search_fuel: 400,
+            term_search_borrowck: true,
+            code_action_grouping: false,
+            expr_fill_default: ra_ap_ide_db::assists::ExprFillDefaultMode::Todo,
+            prefer_self_ty: false,
+        };
+
+        // Get available assists with resolved source changes
+        let assists_result = assists(
+            self.host.raw_database(),
+            &assist_config,
+            AssistResolveStrategy::All,
+            file_range,
+        );
+
+        // Find the specific assist by ID
+        let target_assist = assists_result
+            .into_iter()
+            .find(|assist| assist.id.0 == assist_id);
+
+        if let Some(assist) = target_assist {
+            if let Some(source_change) = assist.source_change {
+                // Convert rust-analyzer source change to our format
+                let file_changes = source_change
+                    .source_file_edits
+                    .into_iter()
+                    .map(|(file_id, (text_edit, _snippet_edit))| {
+                        let file_path = self
+                            .file_watcher
+                            .file_path(file_id)
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        let edits = text_edit
+                            .into_iter()
+                            .map(|indel| {
+                                let line_index = analysis.file_line_index(file_id).unwrap();
+                                let start_line_col = line_index.line_col(indel.delete.start());
+                                let end_line_col = line_index.line_col(indel.delete.end());
+
+                                TextEdit {
+                                    line: start_line_col.line + 1,
+                                    column: start_line_col.col + 1,
+                                    end_line: end_line_col.line + 1,
+                                    end_column: end_line_col.col + 1,
+                                    new_text: indel.insert,
+                                }
+                            })
+                            .collect();
+
+                        FileChange { file_path, edits }
+                    })
+                    .collect();
+
+                // Apply the changes to disk
+                for file_change in &file_changes {
+                    RustAnalyzerUtils::apply_file_change(file_change).await?;
+                }
+
+                let assist_source_change = AssistSourceChange {
+                    file_changes,
+                    is_snippet: source_change.is_snippet,
+                };
+
+                Ok(Some(assist_source_change))
+            } else {
+                Err(anyhow::anyhow!("Assist has no source change available"))
+            }
+        } else {
+            Ok(None)
         }
     }
 }

@@ -58,6 +58,8 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("  comp <file> <line> <col> - Get completions at position");
     println!("  refs <file> <line> <col> - Find references to symbol");
     println!("  hints <file>  - View file with inlay hints");
+    println!("  assists <file> <line> <col> - Get available code assists");
+    println!("  apply <file> <line> <col> <assist_id> - Apply specific assist");
     println!("  rename <file> <line> <col> <new_name> - Rename symbol");
     println!("  quit/exit     - Exit the REPL");
     println!("  Note: File paths can be relative to the workspace or absolute");
@@ -94,6 +96,8 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                         println!("  comp <file> <line> <col> - Get completions at position");
                         println!("  refs <file> <line> <col> - Find references to symbol");
                         println!("  hints <file>  - View file with inlay hints");
+                        println!("  assists <file> <line> <col> - Get available code assists");
+                        println!("  apply <file> <line> <col> <assist_id> - Apply specific assist");
                         println!("  rename <file> <line> <col> <new_name> - Rename symbol");
                         println!("  quit/exit     - Exit the REPL");
                     }
@@ -360,6 +364,111 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                             }
                             Err(e) => {
                                 println!("Error renaming symbol: {}", e);
+                            }
+                        }
+                    }
+                    "assists" => {
+                        if parts.len() != 4 {
+                            println!("Usage: assists <file> <line> <col>");
+                            continue;
+                        }
+
+                        let file_path = resolve_path(workspace_path, parts[1]);
+                        let line: u32 = match parts[2].parse() {
+                            Ok(l) => l,
+                            Err(_) => {
+                                println!("Invalid line number: {}", parts[2]);
+                                continue;
+                            }
+                        };
+                        let column: u32 = match parts[3].parse() {
+                            Ok(c) => c,
+                            Err(_) => {
+                                println!("Invalid column number: {}", parts[3]);
+                                continue;
+                            }
+                        };
+
+                        let cursor = CursorCoordinates {
+                            file_path: file_path.clone(),
+                            line,
+                            column,
+                            symbol: None,
+                        };
+
+                        match analyzer.get_assists(&cursor).await {
+                            Ok(Some(assists)) => {
+                                println!(
+                                    "Available assists at {}:{}:{} ({} items):",
+                                    file_path,
+                                    line,
+                                    column,
+                                    assists.len()
+                                );
+                                for assist in assists {
+                                    println!(
+                                        "  {} ({}): {}",
+                                        assist.label, assist.id, assist.target
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                println!(
+                                    "No assists available at {}:{}:{}",
+                                    file_path, line, column
+                                );
+                            }
+                            Err(e) => {
+                                println!("Error getting assists: {}", e);
+                            }
+                        }
+                    }
+                    "apply" => {
+                        if parts.len() != 5 {
+                            println!("Usage: apply <file> <line> <col> <assist_id>");
+                            continue;
+                        }
+
+                        let file_path = resolve_path(workspace_path, parts[1]);
+                        let line: u32 = match parts[2].parse() {
+                            Ok(l) => l,
+                            Err(_) => {
+                                println!("Invalid line number: {}", parts[2]);
+                                continue;
+                            }
+                        };
+                        let column: u32 = match parts[3].parse() {
+                            Ok(c) => c,
+                            Err(_) => {
+                                println!("Invalid column number: {}", parts[3]);
+                                continue;
+                            }
+                        };
+                        let assist_id = parts[4].to_string();
+
+                        let cursor = CursorCoordinates {
+                            file_path: file_path.clone(),
+                            line,
+                            column,
+                            symbol: None,
+                        };
+
+                        match analyzer.apply_assist(&cursor, &assist_id).await {
+                            Ok(Some(source_change)) => {
+                                println!("Successfully applied assist '{}':", assist_id);
+                                for file_change in &source_change.file_changes {
+                                    println!("  Modified file: {}", file_change.file_path);
+                                    println!("    {} edits applied", file_change.edits.len());
+                                }
+                            }
+                            Ok(None) => {
+                                println!(
+                                    "Assist '{}' not available at {}:{}:{}",
+                                    assist_id, file_path, line, column
+                                );
+                            }
+                            Err(e) => {
+                                println!("Error applying assist '{}': {}", assist_id, e);
                             }
                         }
                     }

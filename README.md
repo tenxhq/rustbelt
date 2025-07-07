@@ -37,9 +37,12 @@ rustbelt type-hint /path/to/file.rs 10 15
 | `ruskel`           | Ready | Generate a Rust code skeleton for a crate, showing its public API structure | `target` (string), `features` (array), `all_features` (bool), `no_default_features` (bool), `private` (bool) |
 | `get_type_hint`    | Alpha | Get type information for a symbol at cursor position                        | `file_path` (string), `line` (number 1-indexed), `column` (number 1-indexed) |
 | `get_definition`   | Alpha | Get definition for symbol at cursor position                                | `file_path`, `line`, `column` |
+| `get_completions`  | Alpha | Get code completion suggestions at cursor position                          | `file_path`, `line`, `column` |
 | `rename_symbol`    | Alpha | Rename a symbol across the workspace                                        | `file_path`, `line`, `column`, `new_name` |
-| `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as types or parameter names     | `file_path` |
-| `find_references` | Alpha | Find all references to a symbol     | `file_path`, `line`, `column` |
+| `view_inlay_hints` | Alpha | View a file with embedded inlay hints, such as types or parameter names     | `file_path`, `start_line` (optional), `end_line` (optional) |
+| `find_references`  | Alpha | Find all references to a symbol                                             | `file_path`, `line`, `column` |
+| `get_assists`      | Alpha | Get available code assists (refactoring actions) at cursor position        | `file_path`, `line`, `column` |
+| `apply_assist`     | Alpha | Apply a specific code assist by ID                                          | `file_path`, `line`, `column`, `assist_id` |
 
 ## Planned Improvements
 
@@ -47,7 +50,6 @@ rustbelt type-hint /path/to/file.rs 10 15
 
 | Tool Name | Status | Description                         | Parameters                    |
 |-----------|--------|-------------------------------------|-------------------------------|
-| `get_completions` | Planned | Get code completion suggestions     | `file_path`, `line`, `column` |
 | `get_signature_help` | Planned | Get function signature information  | `file_path`, `line`, `column` |
 | `get_document_symbols` | Planned | Get all symbols in a document       | `file_path`                   |
 | `get_workspace_symbols` | Planned | Search for symbols across workspace | `query`                       |

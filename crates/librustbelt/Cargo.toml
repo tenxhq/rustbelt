@@ -15,6 +15,7 @@ ra_ap_cfg = { workspace = true }
 ra_ap_hir = { workspace = true }
 ra_ap_ide = { workspace = true }
 ra_ap_ide_db = { workspace = true }
+ra_ap_ide_assists = { workspace = true }
 ra_ap_intern = { workspace = true }
 ra_ap_project_model = { workspace = true }
 ra_ap_syntax = { workspace = true }

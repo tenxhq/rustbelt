@@ -11,7 +11,7 @@ pub mod utils;
 pub use analyzer::RustAnalyzerish;
 pub use builder::RustAnalyzerishBuilder;
 pub use entities::{
-    CompletionItem, CursorCoordinates, DefinitionInfo, FileChange, ReferenceInfo, RenameResult,
-    TextEdit, TypeHint,
+    AssistInfo, AssistSourceChange, CompletionItem, CursorCoordinates, DefinitionInfo, FileChange,
+    ReferenceInfo, RenameResult, TextEdit, TypeHint,
 };
 pub use utils::RustAnalyzerUtils;

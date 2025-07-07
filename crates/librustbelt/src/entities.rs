@@ -159,6 +159,7 @@ pub struct RenameResult {
 
 /// Information about changes to a single file during rename
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct FileChange {
     /// Path to the file that will be changed
     pub file_path: String,
@@ -168,6 +169,7 @@ pub struct FileChange {
 
 /// A single text edit within a file
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct TextEdit {
     /// Line number (1-based) where the edit starts
     pub line: u32,
@@ -321,5 +323,36 @@ impl std::fmt::Display for ReferenceInfo {
             ref_type,
             self.content.trim()
         )
+    }
+}
+
+/// Information about a code assist (code action)
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct AssistInfo {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub target: String,
+    pub source_change: Option<AssistSourceChange>,
+}
+
+impl std::fmt::Display for AssistInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({}): {}", self.label, self.kind, self.target)
+    }
+}
+
+/// Source change for an assist
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct AssistSourceChange {
+    pub file_changes: Vec<FileChange>,
+    pub is_snippet: bool,
+}
+
+impl std::fmt::Display for AssistSourceChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Changes to {} files", self.file_changes.len())
     }
 }
