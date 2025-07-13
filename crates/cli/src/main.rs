@@ -4,9 +4,10 @@
 //! functionality and standalone CLI tools.
 
 use clap::{Parser, Subcommand};
-use librustbelt::{builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
+use command::{CommandWrapper, execute_analyzer_command, extract_workspace_path};
 use rustbelt_server::VERSION;
 
+mod command;
 mod repl;
 
 #[derive(Parser)]
@@ -32,72 +33,13 @@ enum Commands {
         #[arg(long, default_value = "3001")]
         port: u16,
     },
-    /// Get type hint for a specific position
-    TypeHint {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// Get definition details for a symbol at a specific position
-    GetDefinition {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// Get completion suggestions at a specific position
-    GetCompletions {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// Find all references to a symbol at a specific position
-    FindReferences {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// View a Rust file with embedded inlay hints such as types and named arguments
-    ViewInlayHints {
-        /// Path to the Rust source file
-        file_path: String,
-    },
-    /// Get available code assists (code actions) at a specific position
-    GetAssists {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-    },
-    /// Apply a specific code assist at a position
-    ApplyAssist {
-        /// Path to the Rust source file
-        file_path: String,
-        /// Line number (1-based)
-        line: u32,
-        /// Column number (1-based)
-        column: u32,
-        /// ID of the assist to apply
-        assist_id: String,
-    },
-    /// Repl to a workspace for interactive queries
+    /// Connect to a workspace for interactive queries
     Repl {
         /// Path to the workspace directory
         workspace_path: String,
     },
+    /// Run an analyzer task
+    Analyzer(#[command(flatten)] CommandWrapper),
 }
 
 #[tokio::main]
@@ -106,266 +48,16 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Serve { tcp, host, port } => {
-            // Only initialize logging for TCP mode
-            // In stdio mode, logging would interfere with JSON-RPC communication
             if tcp {
+                // Run in TCP mode
+                // Only initialize logging for TCP mode
                 tracing_subscriber::fmt::init();
-            }
-
-            if tcp {
-                // Run in TCP mode for debugging
                 let addr = format!("{host}:{port}");
                 rustbelt_server::serve_tcp(addr).await?;
             } else {
                 // Run in stdio mode - recommended for MCP clients (default)
+                // No logging as it would interfere with JSON-RPC communication
                 rustbelt_server::serve_stdio().await?;
-            }
-        }
-        Commands::TypeHint {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.get_type_hint(&cursor).await {
-                Ok(Some(type_info)) => {
-                    println!("The type information is:\n{type_info}");
-                }
-                Ok(None) => {
-                    eprintln!("No type information available at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting type hint: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::GetDefinition {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.get_definition(&cursor).await {
-                Ok(Some(definitions)) => {
-                    println!("Found {} definition(s):", definitions.len());
-                    for def in definitions {
-                        println!("  {def}");
-                    }
-                }
-                Ok(None) => {
-                    eprintln!("No definitions found at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting definitions: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::GetCompletions {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.get_completions(&cursor).await {
-                Ok(Some(completions)) => {
-                    println!(
-                        "Available completions at {}:{}:{} ({} items):",
-                        file_path,
-                        line,
-                        column,
-                        completions.len()
-                    );
-                    for completion in completions {
-                        println!("  {}", completion);
-                    }
-                }
-                Ok(None) => {
-                    eprintln!("No completions found at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting completions: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::FindReferences {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.find_references(&cursor).await {
-                Ok(Some(references)) => {
-                    println!(
-                        "Found {} reference(s) to symbol at {}:{}:{}:",
-                        references.len(),
-                        file_path,
-                        line,
-                        column
-                    );
-                    for reference in references {
-                        println!("  {}", reference);
-                    }
-                }
-                Ok(None) => {
-                    eprintln!("No references found at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error finding references: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::ViewInlayHints { file_path } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            match analyzer.view_inlay_hints(&file_path, None, None).await {
-                Ok(annotated_content) => {
-                    println!("{}", annotated_content);
-                }
-                Err(e) => {
-                    eprintln!("Error viewing inlay hints: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::GetAssists {
-            file_path,
-            line,
-            column,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.get_assists(&cursor).await {
-                Ok(Some(assists)) => {
-                    println!(
-                        "Available assists at {}:{}:{} ({} items):",
-                        file_path,
-                        line,
-                        column,
-                        assists.len()
-                    );
-                    for assist in assists {
-                        println!("  {} ({}): {}", assist.label, assist.id, assist.target);
-                    }
-                }
-                Ok(None) => {
-                    eprintln!("No assists available at {file_path}:{line}:{column}");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error getting assists: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::ApplyAssist {
-            file_path,
-            line,
-            column,
-            assist_id,
-        } => {
-            // Initialize logging for debugging
-            tracing_subscriber::fmt::init();
-
-            // Initialize a standalone analyzer for CLI usage
-            let mut analyzer = RustAnalyzerishBuilder::from_file(&file_path)?.build()?;
-
-            let cursor = CursorCoordinates {
-                file_path: file_path.clone(),
-                line,
-                column,
-                symbol: None,
-            };
-
-            match analyzer.apply_assist(&cursor, &assist_id).await {
-                Ok(Some(source_change)) => {
-                    println!("Successfully applied assist '{}':", assist_id);
-                    for file_change in &source_change.file_changes {
-                        println!("  Modified file: {}", file_change.file_path);
-                        println!("    {} edits applied", file_change.edits.len());
-                    }
-                }
-                Ok(None) => {
-                    eprintln!(
-                        "Assist '{}' not available at {file_path}:{line}:{column}",
-                        assist_id
-                    );
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error applying assist '{}': {}", assist_id, e);
-                    std::process::exit(1);
-                }
             }
         }
         Commands::Repl { workspace_path } => {
@@ -373,6 +65,15 @@ async fn main() -> anyhow::Result<()> {
             tracing_subscriber::fmt::init();
 
             repl::run_repl(&workspace_path).await?;
+        }
+        Commands::Analyzer(command_wrapper) => {
+            // Initialize logging for debugging
+            tracing_subscriber::fmt::init();
+
+            let analyzer_command = command_wrapper.command;
+            // For analyzer commands, we need to determine the workspace path
+            let workspace_path = extract_workspace_path(&analyzer_command);
+            execute_analyzer_command(analyzer_command, &workspace_path).await?;
         }
     }
 

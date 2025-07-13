@@ -15,3 +15,6 @@ pub use entities::{
     ReferenceInfo, RenameResult, TextEdit, TypeHint,
 };
 pub use utils::RustAnalyzerUtils;
+
+/// Result type alias for the library
+pub type Result<T> = anyhow::Result<T>;

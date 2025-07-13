@@ -1,19 +1,11 @@
 use std::path::Path;
 
 use anyhow::Result;
+use clap::Parser;
 use librustbelt::{builder::RustAnalyzerishBuilder, entities::CursorCoordinates};
 use rustyline::{Config, DefaultEditor};
 
-fn resolve_path(workspace_path: &str, file_path: &str) -> String {
-    if Path::new(file_path).is_absolute() {
-        file_path.to_string()
-    } else {
-        Path::new(workspace_path)
-            .join(file_path)
-            .to_string_lossy()
-            .to_string()
-    }
-}
+use crate::command::{CommandWrapper, execute_analyzer_command_with_instance};
 
 pub async fn run_repl(workspace_path: &str) -> Result<()> {
     println!("Connecting to workspace: {}", workspace_path);
@@ -51,20 +43,8 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
         let _ = analyzer.get_type_hint(&dummy_cursor).await; // This will trigger project loading
     }
 
-    println!("Connected to workspace. Available commands:");
-    println!("  help          - Show this help message");
-    println!("  type <file> <line> <col> - Get type hint at position");
-    println!("  def <file> <line> <col>  - Get definition at position");
-    println!("  comp <file> <line> <col> - Get completions at position");
-    println!("  refs <file> <line> <col> - Find references to symbol");
-    println!("  hints <file>  - View file with inlay hints");
-    println!("  assists <file> <line> <col> - Get available code assists");
-    println!("  apply <file> <line> <col> <assist_id> - Apply specific assist");
-    println!("  rename <file> <line> <col> <new_name> - Rename symbol");
-    println!("  quit/exit     - Exit the REPL");
-    println!("  Note: File paths can be relative to the workspace or absolute");
-    println!("  Use up/down arrows to navigate command history");
-    println!();
+    println!("Connected to workspace.");
+    print_repl_help();
 
     loop {
         let readline = rl.readline("rustbelt> ");
@@ -89,394 +69,29 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
                         break;
                     }
                     "help" => {
-                        println!("Available commands:");
-                        println!("  help          - Show this help message");
-                        println!("  type <file> <line> <col> - Get type hint at position");
-                        println!("  def <file> <line> <col>  - Get definition at position");
-                        println!("  comp <file> <line> <col> - Get completions at position");
-                        println!("  refs <file> <line> <col> - Find references to symbol");
-                        println!("  hints <file>  - View file with inlay hints");
-                        println!("  assists <file> <line> <col> - Get available code assists");
-                        println!("  apply <file> <line> <col> <assist_id> - Apply specific assist");
-                        println!("  rename <file> <line> <col> <new_name> - Rename symbol");
-                        println!("  quit/exit     - Exit the REPL");
-                    }
-                    "type" => {
-                        if parts.len() != 4 {
-                            println!("Usage: type <file> <line> <col>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.get_type_hint(&cursor).await {
-                            Ok(Some(type_info)) => {
-                                println!("Type Hint:\n-----\n{}\n------", type_info);
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No type information available at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error getting type hint: {}", e);
-                            }
-                        }
-                    }
-                    "def" => {
-                        if parts.len() != 4 {
-                            println!("Usage: def <file> <line> <col>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.get_definition(&cursor).await {
-                            Ok(Some(definitions)) => {
-                                println!("Found {} definition(s):", definitions.len());
-                                for def in definitions {
-                                    println!("  {}", def);
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No definitions found at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error getting definitions: {}", e);
-                            }
-                        }
-                    }
-                    "comp" => {
-                        if parts.len() != 4 {
-                            println!("Usage: comp <file> <line> <col>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.get_completions(&cursor).await {
-                            Ok(Some(completions)) => {
-                                println!(
-                                    "Available completions at {}:{}:{} ({} items):",
-                                    file_path,
-                                    line,
-                                    column,
-                                    completions.len()
-                                );
-                                for completion in completions {
-                                    println!("  {}", completion);
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No completions found at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error getting completions: {}", e);
-                            }
-                        }
-                    }
-                    "refs" => {
-                        if parts.len() != 4 {
-                            println!("Usage: refs <file> <line> <col>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.find_references(&cursor).await {
-                            Ok(Some(references)) => {
-                                println!("Found {} reference(s):", references.len());
-                                for reference in references {
-                                    println!("  {}", reference);
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No references found at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error finding references: {}", e);
-                            }
-                        }
-                    }
-                    "hints" => {
-                        if parts.len() != 2 {
-                            println!("Usage: hints <file>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-
-                        match analyzer.view_inlay_hints(&file_path, None, None).await {
-                            Ok(annotated_content) => {
-                                println!("File with inlay hints:");
-                                println!("=====================================");
-                                println!("{}", annotated_content);
-                                println!("=====================================");
-                            }
-                            Err(e) => {
-                                println!("Error viewing inlay hints: {}", e);
-                            }
-                        }
-                    }
-                    "rename" => {
-                        if parts.len() != 5 {
-                            println!("Usage: rename <file> <line> <col> <new_name>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-                        let new_name = parts[4].to_string();
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.rename_symbol(&cursor, &new_name).await {
-                            Ok(Some(changes)) => {
-                                println!(
-                                    "Rename successful! {} file(s) changed:",
-                                    changes.file_changes.len()
-                                );
-                                for change in &changes.file_changes {
-                                    println!(
-                                        "  {}: {} edit(s)",
-                                        change.file_path,
-                                        change.edits.len()
-                                    );
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No symbol found to rename at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error renaming symbol: {}", e);
-                            }
-                        }
-                    }
-                    "assists" => {
-                        if parts.len() != 4 {
-                            println!("Usage: assists <file> <line> <col>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.get_assists(&cursor).await {
-                            Ok(Some(assists)) => {
-                                println!(
-                                    "Available assists at {}:{}:{} ({} items):",
-                                    file_path,
-                                    line,
-                                    column,
-                                    assists.len()
-                                );
-                                for assist in assists {
-                                    println!(
-                                        "  {} ({}): {}",
-                                        assist.label, assist.id, assist.target
-                                    );
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "No assists available at {}:{}:{}",
-                                    file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error getting assists: {}", e);
-                            }
-                        }
-                    }
-                    "apply" => {
-                        if parts.len() != 5 {
-                            println!("Usage: apply <file> <line> <col> <assist_id>");
-                            continue;
-                        }
-
-                        let file_path = resolve_path(workspace_path, parts[1]);
-                        let line: u32 = match parts[2].parse() {
-                            Ok(l) => l,
-                            Err(_) => {
-                                println!("Invalid line number: {}", parts[2]);
-                                continue;
-                            }
-                        };
-                        let column: u32 = match parts[3].parse() {
-                            Ok(c) => c,
-                            Err(_) => {
-                                println!("Invalid column number: {}", parts[3]);
-                                continue;
-                            }
-                        };
-                        let assist_id = parts[4].to_string();
-
-                        let cursor = CursorCoordinates {
-                            file_path: file_path.clone(),
-                            line,
-                            column,
-                            symbol: None,
-                        };
-
-                        match analyzer.apply_assist(&cursor, &assist_id).await {
-                            Ok(Some(source_change)) => {
-                                println!("Successfully applied assist '{}':", assist_id);
-                                for file_change in &source_change.file_changes {
-                                    println!("  Modified file: {}", file_change.file_path);
-                                    println!("    {} edits applied", file_change.edits.len());
-                                }
-                            }
-                            Ok(None) => {
-                                println!(
-                                    "Assist '{}' not available at {}:{}:{}",
-                                    assist_id, file_path, line, column
-                                );
-                            }
-                            Err(e) => {
-                                println!("Error applying assist '{}': {}", assist_id, e);
-                            }
-                        }
+                        print_repl_help();
                     }
                     _ => {
-                        println!(
-                            "Unknown command: {}. Type 'help' for available commands.",
-                            parts[0]
-                        );
+                        // Try to parse as an analyzer command using clap
+                        match CommandWrapper::try_parse_from(parts) {
+                            Ok(wrapper) => {
+                                match execute_analyzer_command_with_instance(
+                                    wrapper.command,
+                                    &mut analyzer,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        println!("Command failed: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("Invalid command: {}", e);
+                                println!("Type 'help' for available commands.");
+                            }
+                        }
                     }
                 }
             }
@@ -498,4 +113,42 @@ pub async fn run_repl(workspace_path: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_repl_help() {
+    println!("Available commands:");
+
+    // Generate help text from clap command definitions
+    use clap::CommandFactory;
+    let app = CommandWrapper::command();
+
+    println!("  {:<20} description", "command");
+    // Get the subcommands directly from the CommandWrapper
+    for subcommand in app.get_subcommands() {
+        // The subcommand here is the "command" field which contains our actual commands
+        let name = subcommand.get_name();
+        let about = subcommand.get_about().unwrap_or_default();
+
+        // Convert command name from CamelCase to kebab-case for display
+        let display_name = name
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i > 0 && c.is_uppercase() {
+                    format!("-{}", c.to_lowercase())
+                } else {
+                    c.to_lowercase().to_string()
+                }
+            })
+            .collect::<String>();
+
+        println!("  {:<20} {}", display_name, about);
+    }
+
+    println!("  {:<20} Show this help message", "help");
+    println!("  {:<20} Exit the REPL", "quit/exit");
+    println!();
+    println!("Note: File paths can be relative to the workspace or absolute");
+    println!("      Use --symbol to specify a symbol name when coordinates are ambiguous");
+    println!("      Use up/down arrows to navigate command history");
 }
