@@ -108,6 +108,14 @@ pub enum AnalyzerCommand {
         symbol: Option<String>,
     },
 
+    /// Search for symbols across the entire workspace
+    GetWorkspaceSymbols {
+        /// Path to *any* file inside the target workspace (used to locate `Cargo.toml`)
+        file_path: String,
+        /// Case-insensitive query string to search for
+        query: String,
+    },
+
     /// Rename a symbol at a specific position
     RenameSymbol {
         /// Path to the Rust source file
@@ -370,6 +378,26 @@ pub async fn execute_analyzer_command_with_instance(
                 }
             }
         }
+        AnalyzerCommand::GetWorkspaceSymbols { file_path, query } => {
+            match analyzer.get_workspace_symbols(&query).await {
+                Ok(Some(symbols)) => {
+                    println!(
+                        "Found {} symbol(s) matching '{}':",
+                        symbols.len(),
+                        query
+                    );
+                    for sym in symbols {
+                        println!("  {}", sym);
+                    }
+                }
+                Ok(None) => {
+                    println!("No symbols found matching '{}' in workspace", query);
+                }
+                Err(e) => {
+                    println!("Error searching workspace symbols: {}", e);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -393,5 +421,6 @@ pub(crate) fn extract_workspace_path(command: &AnalyzerCommand) -> String {
         | AnalyzerCommand::GetAssists { file_path, .. }
         | AnalyzerCommand::ApplyAssist { file_path, .. }
         | AnalyzerCommand::RenameSymbol { file_path, .. } => file_path.clone(),
+        AnalyzerCommand::GetWorkspaceSymbols { file_path, .. } => file_path.clone(),
     }
 }

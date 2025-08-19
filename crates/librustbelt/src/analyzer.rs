@@ -23,7 +23,7 @@ use tracing::{debug, trace, warn};
 
 use super::entities::{
     AssistInfo, AssistSourceChange, CompletionItem, CursorCoordinates, DefinitionInfo, FileChange,
-    ReferenceInfo, RenameResult, TextEdit, TypeHint,
+    ReferenceInfo, RenameResult, TextEdit, TypeHint, WorkspaceSymbol,
 };
 use super::file_watcher::FileWatcher;
 use super::utils::RustAnalyzerUtils;
@@ -684,6 +684,78 @@ impl RustAnalyzerish {
                 .then_with(|| a.column.cmp(&b.column))
         });
         Ok(Some(references))
+    }
+
+    /// Perform a workspace-wide fuzzy symbol search
+    ///
+    /// Returns symbols whose names contain `query` (case-insensitive).
+    /// Limits the result set to 500 items for performance.
+    pub async fn get_workspace_symbols(
+        &mut self,
+        query: &str,
+    ) -> Result<Option<Vec<WorkspaceSymbol>>> {
+        // First, make sure we are up-to-date with filesystem changes
+        self.file_watcher.drain_and_apply_changes(&mut self.host)?;
+
+        let analysis = self.host.analysis();
+        let lower_query = query.to_lowercase();
+
+        let mut results: Vec<WorkspaceSymbol> = Vec::new();
+
+        for (file_id, vfs_path) in self.file_watcher.vfs().iter() {
+            // Stop early if we reached the limit
+            if results.len() >= 500 {
+                break;
+            }
+
+            let file_structure = match analysis.file_structure(file_id) {
+                Ok(nodes) => nodes,
+                Err(_) => continue, // Skip files we cannot analyse
+            };
+
+            for node in file_structure {
+                if results.len() >= 500 {
+                    break;
+                }
+
+                // Case-insensitive substring match
+                if !node.label.to_lowercase().contains(&lower_query) {
+                    continue;
+                }
+
+                // Convert position to 1-based line/column
+                let line_index = match analysis.file_line_index(file_id) {
+                    Ok(idx) => idx,
+                    Err(_) => continue,
+                };
+
+                // Use the navigation range provided by the structure node to locate
+                // the symbol's position. `navigation_range` always points to the most
+                // relevant part of the definition (e.g. the identifier).
+                let start = node.navigation_range.start();
+                let line_col: LineCol = line_index.line_col(start);
+
+                let file_path = self
+                    .file_watcher
+                    .file_path(file_id)
+                    .unwrap_or_else(|| vfs_path.to_string());
+
+                results.push(WorkspaceSymbol {
+                    name: node.label.to_string(),
+                    kind: Some(format!("{:?}", node.kind)),
+                    file_path,
+                    line: line_col.line + 1,
+                    column: line_col.col + 1,
+                    container_name: node.detail.clone(),
+                });
+            }
+        }
+
+        if results.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(results))
+        }
     }
 
     /// Helper method to get line content from file text

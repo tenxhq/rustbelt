@@ -356,3 +356,49 @@ impl std::fmt::Display for AssistSourceChange {
         write!(f, "Changes to {} files", self.file_changes.len())
     }
 }
+
+/// Workspace-wide symbol search result
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct WorkspaceSymbol {
+    /// The symbol name (identifier)
+    pub name: String,
+    /// The kind of symbol (function, struct, trait, etc.)
+    pub kind: Option<String>,
+    /// Absolute path to the file that contains this symbol
+    pub file_path: String,
+    /// Line number (1-based) where the symbol is defined
+    pub line: u32,
+    /// Column number (1-based) where the symbol is defined
+    pub column: u32,
+    /// Optional container name (module / impl / etc.)
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<String>"))]
+    pub container_name: Option<String>,
+}
+
+impl std::fmt::Display for WorkspaceSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.kind, &self.container_name) {
+            (Some(kind), Some(container)) => write!(
+                f,
+                "{}:{}:{} - {} ({}) :: {}",
+                self.file_path, self.line, self.column, self.name, kind, container
+            ),
+            (Some(kind), None) => write!(
+                f,
+                "{}:{}:{} - {} ({})",
+                self.file_path, self.line, self.column, self.name, kind
+            ),
+            (None, Some(container)) => write!(
+                f,
+                "{}:{}:{} - {} :: {}",
+                self.file_path, self.line, self.column, self.name, container
+            ),
+            (None, None) => write!(
+                f,
+                "{}:{}:{} - {}",
+                self.file_path, self.line, self.column, self.name
+            ),
+        }
+    }
+}

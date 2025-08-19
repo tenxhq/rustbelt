@@ -12,7 +12,7 @@ pub use analyzer::RustAnalyzerish;
 pub use builder::RustAnalyzerishBuilder;
 pub use entities::{
     AssistInfo, AssistSourceChange, CompletionItem, CursorCoordinates, DefinitionInfo, FileChange,
-    ReferenceInfo, RenameResult, TextEdit, TypeHint,
+    ReferenceInfo, RenameResult, TextEdit, TypeHint, WorkspaceSymbol,
 };
 pub use utils::RustAnalyzerUtils;
 

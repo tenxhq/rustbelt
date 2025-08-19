@@ -93,6 +93,18 @@ pub struct ApplyAssistParams {
     pub assist_id: String,
 }
 
+/// Parameters for the get_workspace_symbols tool
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceSymbolsParams {
+    /// Case-insensitive query string to search for
+    pub query: String,
+    /// Optional path to any file inside the workspace. If omitted, the
+    /// current working directory will be used to initialize the analyzer
+    /// when it is not yet available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+}
+
 /// Rust-Analyzer MCP server connection
 #[derive(Debug, Clone)]
 pub struct Rustbelt {
@@ -103,6 +115,59 @@ impl Rustbelt {
     fn new() -> Self {
         Self {
             analyzer: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Search for symbols across the current workspace matching a query
+    ///
+    /// Performs a case-insensitive substring search for symbol names
+    /// (functions, types, modules, etc.) across every file in the loaded
+    /// workspace.  Useful for quickly locating where a symbol is defined or
+    /// discovering APIs.
+    #[tool]
+    async fn get_workspace_symbols(
+        &self,
+        _ctx: &ServerCtx,
+        params: WorkspaceSymbolsParams,
+    ) -> Result<CallToolResult> {
+        // Ensure an analyzer exists – initialise if needed
+        if self.analyzer.lock().await.is_none() {
+            if let Some(path) = &params.workspace_path {
+                self.ensure_analyzer(path).await?;
+            } else {
+                let cwd = std::env::current_dir()?;
+                self.ensure_analyzer(&cwd).await?;
+            }
+        }
+
+        match self
+            .analyzer
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .get_workspace_symbols(&params.query)
+            .await
+        {
+            Ok(Some(symbols)) => {
+                let text = symbols
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(CallToolResult::new()
+                    .with_text_content(text)
+                    .is_error(false))
+            }
+            Ok(None) => Ok(CallToolResult::new()
+                .with_text_content(format!(
+                    "No symbols found matching '{}' in workspace",
+                    params.query
+                ))
+                .is_error(false)),
+            Err(e) => Ok(CallToolResult::new()
+                .with_text_content(format!("Error searching workspace symbols: {e}"))
+                .is_error(true)),
         }
     }
 
