@@ -12,10 +12,11 @@ use ra_ap_ide::{
     AdjustmentHints, AdjustmentHintsMode, Analysis, AnalysisHost, CallableSnippets,
     ClosureReturnTypeHints, CompletionConfig, CompletionFieldsToResolve,
     CompletionItemKind as RaCompletionItemKind, DiscriminantHints, FileId, FilePosition, FileRange,
-    GenericParameterHints, HoverConfig, HoverDocFormat, InlayFieldsToResolve, InlayHintPosition,
-    InlayHintsConfig, LifetimeElisionHints, LineCol, LineIndex, MonikerResult, SubstTyLen,
-    TextRange, TextSize,
+    FindAllRefsConfig, GenericParameterHints, GotoDefinitionConfig, HoverConfig, HoverDocFormat,
+    InlayFieldsToResolve, InlayHintPosition, InlayHintsConfig, LifetimeElisionHints, LineCol,
+    LineIndex, MonikerResult, RenameConfig, SubstTyLen, TextRange, TextSize,
 };
+use ra_ap_ide_db::MiniCore;
 use ra_ap_ide_assists::{AssistConfig, AssistResolveStrategy, assists};
 use ra_ap_ide_db::imports::insert_use::{ImportGranularity, InsertUseConfig, PrefixKind};
 use ra_ap_ide_db::text_edit::TextEditBuilder;
@@ -222,6 +223,7 @@ impl RustAnalyzerish {
             max_enum_variants_count: Some(10),
             max_subst_ty_len: SubstTyLen::Unlimited,
             show_drop_glue: false,
+            minicore: MiniCore::default(),
         };
 
         debug!(
@@ -326,6 +328,7 @@ impl RustAnalyzerish {
             fields_to_resolve: CompletionFieldsToResolve::empty(),
             exclude_flyimport: vec![],
             exclude_traits: &[],
+            minicore: MiniCore::default(),
         };
 
         match analysis.completions(&config, position, Some('.')) {
@@ -413,8 +416,9 @@ impl RustAnalyzerish {
         // Use std::panic::catch_unwind to handle potential panics in rust-analyzer
         // Happens when we query colum: 1 row: 1
         // TODO Report bug
+        let goto_config = GotoDefinitionConfig { minicore: MiniCore::default() };
         let goto_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            analysis.goto_definition(Self::create_file_position(file_id, offset))
+            analysis.goto_definition(Self::create_file_position(file_id, offset), &goto_config)
         }));
 
         let definitions_result = match goto_result {
@@ -585,8 +589,12 @@ impl RustAnalyzerish {
         );
 
         // Query for all references
+        let find_refs_config = FindAllRefsConfig {
+            search_scope: None,
+            minicore: MiniCore::default(),
+        };
         let references_result =
-            match analysis.find_all_refs(Self::create_file_position(file_id, offset), None) {
+            match analysis.find_all_refs(Self::create_file_position(file_id, offset), &find_refs_config) {
                 Ok(Some(search_results)) => search_results,
                 Ok(None) => {
                     debug!("No references found at position");
@@ -725,7 +733,12 @@ impl RustAnalyzerish {
         // };
 
         // Perform the actual rename
-        let rename_result = match analysis.rename(position, new_name) {
+        let rename_config = RenameConfig {
+            prefer_no_std: false,
+            prefer_prelude: true,
+            prefer_absolute: false,
+        };
+        let rename_result = match analysis.rename(position, new_name, &rename_config) {
             Ok(result) => result,
             Err(e) => {
                 warn!("Failed to perform rename: {:?}", e);
@@ -823,6 +836,7 @@ impl RustAnalyzerish {
             adjustment_hints: AdjustmentHints::Never,
             adjustment_hints_mode: AdjustmentHintsMode::Prefix,
             adjustment_hints_hide_outside_unsafe: false,
+            adjustment_hints_disable_reborrows: false,
             closure_return_type_hints: ClosureReturnTypeHints::Never,
             closure_capture_hints: false,
             binding_mode_hints: false,
@@ -843,6 +857,7 @@ impl RustAnalyzerish {
                 resolve_label_location: false,
                 resolve_label_command: false,
             },
+            minicore: MiniCore::default(),
         };
 
         // Get inlay hints for the entire file
